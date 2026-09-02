@@ -1,0 +1,12 @@
+**/node_modules
+**/.next
+**/dist
+**/build
+**/coverage
+**/.env
+.git
+.git/**
+postgres-data
+redis-data
+infra/data
+npm-debug.log*

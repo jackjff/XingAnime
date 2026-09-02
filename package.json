@@ -1,0 +1,13 @@
+{
+  "name": "xing-anime",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "dev": "npm exec --yes pnpm@10.0.0 -- --parallel --filter @xing-anime/web --filter @xing-anime/api dev",
+    "build": "npm exec --yes pnpm@10.0.0 -- -r --if-present build",
+    "lint": "npm exec --yes pnpm@10.0.0 -- -r --if-present lint",
+    "test": "npm exec --yes pnpm@10.0.0 -- -r --if-present test",
+    "typecheck": "npm exec --yes pnpm@10.0.0 -- -r --if-present typecheck"
+  }
+}

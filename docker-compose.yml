@@ -1,0 +1,95 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-xing_anime}
+      POSTGRES_USER: ${POSTGRES_USER:-xing_anime}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  directus:
+    image: directus/directus:11
+    restart: unless-stopped
+    ports:
+      - "${DIRECTUS_PORT:-8055}:8055"
+    environment:
+      SECRET: ${DIRECTUS_SECRET:-replace-with-a-long-random-secret}
+      ADMIN_EMAIL: ${DIRECTUS_ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${DIRECTUS_ADMIN_PASSWORD:-change-me-now}
+      DB_CLIENT: pg
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${POSTGRES_DB:-xing_anime}
+      DB_USER: ${POSTGRES_USER:-xing_anime}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      CACHE_ENABLED: "true"
+      CACHE_STORE: redis
+      REDIS: ${REDIS_URL:-redis://redis:6379}
+      WEBSOCKETS_ENABLED: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  api:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-4000}:4000"
+    environment:
+      NODE_ENV: production
+      API_PORT: 4000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-xing_anime}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-xing_anime}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      SANKA_BASE_URL: ${SANKA_BASE_URL:-https://www.sankavollerei.web.id}
+      SANKA_MIN_REQUEST_INTERVAL_MS: ${SANKA_MIN_REQUEST_INTERVAL_MS:-3500}
+      SANKA_CACHE_TTL_HOME_SECONDS: ${SANKA_CACHE_TTL_HOME_SECONDS:-600}
+      SANKA_SYNC_INTERVAL_SECONDS: ${SANKA_SYNC_INTERVAL_SECONDS:-1800}
+      SANKA_SYNC_LEASE_TTL_SECONDS: ${SANKA_SYNC_LEASE_TTL_SECONDS:-300}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:4000}
+    depends_on:
+      - api
+
+volumes:
+  postgres-data:
+  redis-data:
