@@ -46,6 +46,7 @@ The repository is in active development. Local source, tests, typechecks, and pr
 - Added database cleanup for unusable poster URLs.
 - Added frontend `PosterImage` with local `/poster-fallback.svg` fallback and one-time error recovery.
 - Added poster fallback rendering to episode list rows as well as home, detail, and schedule cards.
+- Added the trusted anime poster to the watch/episode context from persisted PostgreSQL episode metadata, with the same local fallback when unavailable.
 
 ### Web UI
 

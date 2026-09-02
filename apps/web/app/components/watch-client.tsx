@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { SiteHeader } from './site-header';
+import { PosterImage } from './poster-image';
 
 type Playback = { label: string; quality: string | null; kind: 'embed' | 'server'; mode: 'embed' | 'external' | 'unavailable' | 'unknown'; reason: string | null; url: string | null; serverId: string | null };
-type Episode = { source: string; id: string; title: string; animeSlug: string | null; releaseTime: string | null; previousEpisodeId: string | null; nextEpisodeId: string | null; playback: Playback[] };
+type Episode = { source: string; id: string; title: string; animeSlug: string | null; posterUrl?: string | null; releaseTime: string | null; previousEpisodeId: string | null; nextEpisodeId: string | null; playback: Playback[] };
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
 
@@ -125,7 +126,7 @@ export function WatchClient({ source, episode }: { source: string; episode: stri
             {canRenderEmbed && selected?.url && <div className={playerBlocked ? 'player-fallback blocked' : 'player-fallback'}><span>{playerBlocked ? 'Provider menolak pemuatan di dalam frame.' : 'Jika frame tidak tampil, buka sumber langsung di tab baru.'}</span><a href={selected.url} target="_blank" rel="noopener noreferrer">Buka sumber langsung ↗</a></div>}
             {playerNotice && <div className="player-fallback blocked"><span>{playerNotice}</span></div>}
             <div className="playback-toolbar"><div className="playback-heading"><span className="muted-label">PILIH SUMBER VIDEO</span><strong>{playable.length} opsi tersedia</strong><small>Sumber yang diketahui gagal/beriklan disembunyikan</small></div><div className="playback-list">{playable.map(({ item, index }) => { const loading = Boolean(resolvingServerId && item.serverId === resolvingServerId); return <button type="button" aria-pressed={index === selectedIndex} className={index === selectedIndex ? 'playback-chip selected' : 'playback-chip'} key={`${item.label}-${item.quality}-${item.serverId}`} onClick={() => void selectPlayback(item, index)} disabled={Boolean(resolvingServerId)}>{item.quality && <b>{item.quality}</b>} {loading ? 'Memuat…' : item.label}</button>; })}</div></div>
-            <div className="watch-context"><div><span className="context-label">XING ANIME</span><strong>{data.title}</strong><small>Streaming subtitle Bahasa Indonesia</small></div><div className="context-source"><span>SOURCE</span><b>{source}</b>{data.animeSlug && <a className="context-source-link" href={`/anime/${source}/${data.animeSlug}#source-options`}>Ganti sumber</a>}</div></div>
+            <div className="watch-context"><div className="watch-context-poster"><PosterImage className="watch-poster" src={data.posterUrl ?? null} alt="" /></div><div className="watch-context-copy"><span className="context-label">XING ANIME</span><strong>{data.title}</strong><small>Streaming subtitle Bahasa Indonesia</small></div><div className="context-source"><span>SOURCE</span><b>{source}</b>{data.animeSlug && <a className="context-source-link" href={`/anime/${source}/${data.animeSlug}#source-options`}>Ganti sumber</a>}</div></div>
             <div className="watch-navigation"><a className={data.previousEpisodeId ? 'secondary-button' : 'secondary-button disabled'} href={data.previousEpisodeId ? `/watch/${source}/${data.previousEpisodeId}` : undefined}>← Episode sebelumnya</a><a className={data.nextEpisodeId ? 'primary-button' : 'primary-button disabled'} href={data.nextEpisodeId ? `/watch/${source}/${data.nextEpisodeId}` : undefined}>Episode berikutnya →</a></div>
             <p className="provider-note">Link playback berasal dari provider pihak ketiga dan dapat berubah. Xing Anime tidak mem-proxy atau mengubah media.</p>
           </>

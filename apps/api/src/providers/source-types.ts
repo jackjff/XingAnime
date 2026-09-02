@@ -62,6 +62,7 @@ export type SourceEpisodeDetail = {
   id: string;
   title: string;
   animeSlug: string | null;
+  posterUrl?: string | null;
   releaseTime: string | null;
   previousEpisodeId: string | null;
   nextEpisodeId: string | null;

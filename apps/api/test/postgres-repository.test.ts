@@ -8,6 +8,7 @@ describe('PostgresCatalogRepository.findEpisode', () => {
         episode_title: 'Episode 2',
         episode_number: '2',
         anime_slug: 'sample-anime',
+        poster_url: 'https://s4.anilist.co/file/poster.jpg',
         previous_episode_id: 'episode-1',
         next_episode_id: 'episode-3'
       }] }));
@@ -17,6 +18,7 @@ describe('PostgresCatalogRepository.findEpisode', () => {
 
     expect(result).toMatchObject({
       id: 'episode-2',
+      posterUrl: 'https://s4.anilist.co/file/poster.jpg',
       previousEpisodeId: 'episode-1',
       nextEpisodeId: 'episode-3'
     });

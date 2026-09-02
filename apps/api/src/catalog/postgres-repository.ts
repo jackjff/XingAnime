@@ -36,6 +36,7 @@ type EpisodeRow = {
   episode_title: string | null;
   episode_number: string;
   anime_slug: string | null;
+  poster_url?: string | null;
   previous_episode_id?: string | null;
   next_episode_id?: string | null;
 };
@@ -232,14 +233,15 @@ export class PostgresCatalogRepository {
   async findEpisode(source: SourceId, episodeId: string): Promise<SourceEpisodeDetail | null> {
     const result = await this.database.query<EpisodeRow>(
       `WITH ordered_episodes AS (
-         SELECT e.provider_episode_id, e.episode_title, e.episode_number, s.provider_slug AS anime_slug,
+         SELECT e.provider_episode_id, e.episode_title, e.episode_number, s.provider_slug AS anime_slug, a.poster_url,
                 LAG(e.provider_episode_id) OVER (PARTITION BY e.anime_id, e.source_id ORDER BY e.episode_number, e.provider_episode_id) AS previous_episode_id,
                 LEAD(e.provider_episode_id) OVER (PARTITION BY e.anime_id, e.source_id ORDER BY e.episode_number, e.provider_episode_id) AS next_episode_id
          FROM episodes AS e
          JOIN anime_sources AS s ON s.id = e.source_id
+         JOIN anime AS a ON a.id = e.anime_id
          WHERE s.provider_name = $1 AND e.visibility = 'published'
        )
-       SELECT provider_episode_id, episode_title, episode_number, anime_slug, previous_episode_id, next_episode_id
+       SELECT provider_episode_id, episode_title, episode_number, anime_slug, poster_url, previous_episode_id, next_episode_id
        FROM ordered_episodes
        WHERE provider_episode_id = $2
        LIMIT 1`,
@@ -252,6 +254,7 @@ export class PostgresCatalogRepository {
       id: row.provider_episode_id,
       title: row.episode_title ?? row.provider_episode_id,
       animeSlug: row.anime_slug,
+      posterUrl: row.poster_url ?? null,
       releaseTime: null,
       previousEpisodeId: row.previous_episode_id ?? null,
       nextEpisodeId: row.next_episode_id ?? null,

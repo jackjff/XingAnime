@@ -174,8 +174,10 @@
 .playback-heading .muted-label { color: var(--orange-bright); font-size: 9px; font-weight: 800; letter-spacing: 1.4px; padding: 0; }
 .playback-heading strong { color: var(--text); font-size: 12px; }
 .playback-heading small { color: #777276; font-size: 10px; }
-.watch-context { align-items: center; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; padding: 22px 2px 19px; }
-.watch-context > div:first-child { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.watch-context { align-items: center; border-bottom: 1px solid var(--line); display: flex; gap: 12px; justify-content: space-between; padding: 22px 2px 19px; }
+.watch-context-poster { background: var(--surface-soft); border-radius: 5px; flex: 0 0 auto; height: 52px; overflow: hidden; width: 35px; }
+.watch-poster { height: 100%; object-fit: cover; width: 100%; }
+.watch-context-copy { display: flex; flex: 1 1 auto; flex-direction: column; gap: 4px; min-width: 0; }
 .context-label, .context-source span { color: var(--orange); font-size: 9px; font-weight: 800; letter-spacing: 1.3px; }
 .watch-context strong { font-family: Manrope, sans-serif; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .watch-context small { color: var(--muted); font-size: 11px; }
@@ -216,7 +218,8 @@
   .player-fallback { align-items: flex-start; flex-direction: column; gap: 8px; line-height: 1.5; }
   .playback-toolbar { padding: 14px; }
   .playback-heading { flex-basis: auto; }
-  .watch-context { align-items: start; gap: 15px; }
+  .watch-context { align-items: start; gap: 10px; }
+  .watch-context-poster { height: 46px; width: 31px; }
   .watch-context strong { font-size: 13px; max-width: 230px; }
   .context-source { flex: 0 0 auto; }
 }
