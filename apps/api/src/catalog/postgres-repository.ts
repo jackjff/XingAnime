@@ -1,4 +1,4 @@
-import type { SourceAnimeDetail, SourceAnimeSummary, SourceEpisodeDetail, SourceId, SourceScheduleDay } from '../providers/source-types.js';
+import type { SourceAnimeDetail, SourceAnimeSummary, SourceEpisodeDetail, SourceEpisodeSummary, SourceId, SourceScheduleDay, CatalogQuery, EpisodeQuery, PageResult } from '../providers/source-types.js';
 import type { AnimeSummary } from '../providers/sanka/mapper.js';
 
 type QueryResult<Row> = { rows: Row[] };
@@ -27,6 +27,8 @@ type DetailRow = {
   synopsis: string | null;
   status: string | null;
   provider_slug: string | null;
+  first_episode_id: string | null;
+  latest_episode_id: string | null;
 };
 
 type AlternativeRow = { provider_name: SourceId; provider_slug: string | null; provider_anime_id: string };
@@ -49,6 +51,39 @@ type ScheduleRow = {
   poster_url: string | null;
   episode_label: string | null;
 };
+
+type CatalogRow = {
+  total_count: string;
+  provider_name: SourceId;
+  provider_slug: string | null;
+  provider_anime_id: string;
+  title: string;
+  poster_url: string | null;
+  release_day: string | null;
+  latest_episode: string | null;
+};
+
+type EpisodePageRow = {
+  total_count: string;
+  provider_episode_id: string;
+  episode_title: string | null;
+  episode_number: string;
+  release_date: string | null;
+};
+
+function pageResult<T>(items: T[], requestedPage: number, limit: number, total: number): PageResult<T> {
+  const pageCount = total === 0 ? 0 : Math.ceil(total / limit);
+  const page = pageCount === 0 ? 1 : Math.min(requestedPage, pageCount);
+  return {
+    items,
+    page,
+    limit,
+    total,
+    pageCount,
+    hasNext: pageCount > 0 && page < pageCount,
+    hasPrevious: page > 1
+  };
+}
 
 export function canonicalSlug(title: string): string {
   return title.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 160) || 'untitled';
@@ -159,9 +194,70 @@ export class PostgresCatalogRepository {
     }));
   }
 
-  async findDetail(source: SourceId, slug: string): Promise<SourceAnimeDetail | null> {
+  async listCatalog(options: CatalogQuery = {}): Promise<PageResult<SourceAnimeSummary>> {
+    const page = Math.max(1, options.page ?? 1);
+    const limit = Math.min(100, Math.max(1, options.limit ?? 24));
+    const query = options.query?.trim() || null;
+    const letter = options.letter?.trim().toUpperCase() || null;
+    const source = options.source ?? null;
+    const result = await this.database.query<CatalogRow>(
+      `SELECT COUNT(*) OVER () AS total_count, src.provider_name, src.provider_slug, src.provider_anime_id,
+              a.title, a.featured, a.poster_url, a.release_day, MAX(e.episode_number) AS latest_episode
+       FROM anime AS a
+       JOIN anime_sources AS src ON src.anime_id = a.id AND src.source_status <> 'disabled'
+       LEFT JOIN episodes AS e ON e.source_id = src.id AND e.visibility = 'published'
+       WHERE a.visibility = 'published'
+         AND ($1::text IS NULL OR a.title ILIKE '%' || $1 || '%' OR a.canonical_slug ILIKE '%' || $1 || '%' OR src.provider_slug ILIKE '%' || $1 || '%')
+         AND ($2::text IS NULL OR UPPER(LEFT(a.title, 1)) = $2)
+         AND ($3::text IS NULL OR src.provider_name = $3)
+       GROUP BY src.provider_name, src.provider_slug, src.provider_anime_id, a.title, a.featured, a.poster_url, a.release_day
+       ORDER BY a.featured DESC, a.title ASC, src.provider_name ASC
+       LIMIT $4 OFFSET $5`,
+      [query, letter, source, limit, (page - 1) * limit]
+    );
+    const total = Number(result.rows[0]?.total_count ?? 0);
+    return pageResult(result.rows.map((row) => ({
+      source: row.provider_name,
+      slug: row.provider_slug ?? row.provider_anime_id,
+      detailSlug: row.provider_slug ?? row.provider_anime_id,
+      title: row.title,
+      posterUrl: row.poster_url,
+      latestEpisode: row.latest_episode === null ? null : Number(row.latest_episode),
+      releaseDay: row.release_day
+    })), page, limit, total);
+  }
+
+  async listEpisodes(source: SourceId, slug: string, options: EpisodeQuery = {}): Promise<PageResult<SourceEpisodeSummary>> {
+    const page = Math.max(1, options.page ?? 1);
+    const limit = Math.min(100, Math.max(1, options.limit ?? 50));
+    const query = options.query?.trim() || null;
+    const result = await this.database.query<EpisodePageRow>(
+      `SELECT COUNT(*) OVER () AS total_count, e.provider_episode_id, e.episode_title, e.episode_number, NULL::text AS release_date
+       FROM episodes AS e
+       JOIN anime_sources AS src ON src.id = e.source_id
+       WHERE src.provider_name = $1
+         AND (src.provider_slug = $2 OR src.provider_anime_id = $2)
+         AND e.visibility = 'published'
+         AND ($3::text IS NULL OR e.provider_episode_id ILIKE '%' || $3 || '%' OR e.episode_title ILIKE '%' || $3 || '%' OR e.episode_number::text ILIKE '%' || $3 || '%')
+       ORDER BY e.episode_number ASC, e.provider_episode_id ASC
+       LIMIT $4 OFFSET $5`,
+      [source, slug, query, limit, (page - 1) * limit]
+    );
+    const total = Number(result.rows[0]?.total_count ?? 0);
+    return pageResult(result.rows.map((row) => ({
+      id: row.provider_episode_id,
+      title: row.episode_title ?? row.provider_episode_id,
+      number: Number(row.episode_number),
+      releaseDate: row.release_date
+    })), page, limit, total);
+  }
+
+  async findDetail(source: SourceId, slug: string, options: { includeEpisodes?: boolean } = {}): Promise<SourceAnimeDetail | null> {
+    const includeEpisodes = options.includeEpisodes !== false;
     const result = await this.database.query<DetailRow>(
-      `SELECT a.id AS anime_id, a.title, a.poster_url, a.synopsis, a.status, s.provider_slug
+      `SELECT a.id AS anime_id, a.title, a.poster_url, a.synopsis, a.status, s.provider_slug,
+              (SELECT e_first.provider_episode_id FROM episodes AS e_first WHERE e_first.source_id = s.id AND e_first.visibility = 'published' AND e_first.provider_episode_id NOT LIKE 'pembatas-%' AND COALESCE(e_first.episode_title, '') NOT ILIKE '%dalam proses%' ORDER BY e_first.episode_number ASC, e_first.provider_episode_id ASC LIMIT 1) AS first_episode_id,
+              (SELECT e_latest.provider_episode_id FROM episodes AS e_latest WHERE e_latest.source_id = s.id AND e_latest.visibility = 'published' ORDER BY e_latest.episode_number DESC, e_latest.provider_episode_id DESC LIMIT 1) AS latest_episode_id
        FROM anime AS a
        JOIN anime_sources AS s ON s.anime_id = a.id
        WHERE s.provider_name = $1 AND (s.provider_slug = $2 OR s.provider_anime_id = $3)
@@ -171,16 +267,18 @@ export class PostgresCatalogRepository {
     const row = result.rows[0];
     if (!row) return null;
 
-    const episodes = await this.database.query<EpisodeRow>(
-      `SELECT e.provider_episode_id, e.episode_title, e.episode_number, s.provider_slug AS anime_slug
-       FROM episodes AS e
-       JOIN anime_sources AS s ON s.id = e.source_id
-       WHERE s.provider_name = $1 AND (s.provider_slug = $2 OR s.provider_anime_id = $3)
-         AND e.visibility = 'published'
-       ORDER BY e.episode_number ASC`,
-      [source, slug, slug]
-    );
-    if (!episodes.rows.length) return null;
+    const episodes = includeEpisodes
+      ? await this.database.query<EpisodeRow>(
+        `SELECT e.provider_episode_id, e.episode_title, e.episode_number, s.provider_slug AS anime_slug
+         FROM episodes AS e
+         JOIN anime_sources AS s ON s.id = e.source_id
+         WHERE s.provider_name = $1 AND (s.provider_slug = $2 OR s.provider_anime_id = $3)
+           AND e.visibility = 'published'
+         ORDER BY e.episode_number ASC`,
+        [source, slug, slug]
+      )
+      : { rows: [] as EpisodeRow[] };
+    if (includeEpisodes && !episodes.rows.length) return null;
     const alternatives = await this.database.query<AlternativeRow>(
       `SELECT provider_name, provider_slug, provider_anime_id
        FROM anime_sources
@@ -204,6 +302,8 @@ export class PostgresCatalogRepository {
         number: Number(episode.episode_number),
         releaseDate: null
       })),
+      firstEpisodeId: row.first_episode_id,
+      latestEpisodeId: row.latest_episode_id,
       availableSources: alternatives.rows.map((alternative) => ({ source: alternative.provider_name, slug: alternative.provider_slug ?? alternative.provider_anime_id }))
     };
   }

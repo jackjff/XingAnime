@@ -67,8 +67,8 @@ export default function HomePage() {
             Temukan rilisan anime terbaru dengan pengalaman menonton yang bersih, cepat, dan nyaman.
           </p>
           <div className="hero-actions">
-            <a className="primary-button" href={featured ? `/anime/otakudesu/${featured.slug}` : '#catalog'}>▶ Mulai Menonton</a>
-            <a className="secondary-button" href="#catalog">＋ Daftar Saya</a>
+            <a className="primary-button" href={featured ? `/anime/${featured.source}/${featured.slug}` : '#catalog'}>▶ Mulai Menonton</a>
+            <a className="secondary-button" href="/history">＋ Daftar Saya</a>
           </div>
           <div className="hero-meta">
             <span>● Subtitle Indonesia</span>
@@ -89,7 +89,7 @@ export default function HomePage() {
             <p className="eyebrow">XING ANIME COLLECTION</p>
             <h2>{query ? `Hasil pencarian untuk “${query}”` : 'Sedang Tayang'}</h2>
           </div>
-          <div className="catalog-heading-side"><span className="catalog-count">{loading ? '—' : `${filteredAnime.length} judul`}</span><a href="#genres" className="view-all">Jelajahi genre <span>→</span></a></div>
+          <div className="catalog-heading-side"><span className="catalog-count">{loading ? '—' : `${filteredAnime.length} judul`}</span><a href="/catalog" className="view-all">Lihat katalog <span>→</span></a></div>
         </div>
 
         {loading && <div className="status-card">Memuat katalog anime...</div>}
@@ -100,8 +100,8 @@ export default function HomePage() {
         {!loading && !error && filteredAnime.length > 0 && (
           <div className="anime-grid">
             {filteredAnime.map((item, index) => (
-              <article className="anime-card" id={item.slug} key={item.slug}>
-                <a className="card-link" href={`/anime/otakudesu/${item.slug}`}>
+              <article className="anime-card" id={`${item.source}-${item.slug}`} key={`${item.source}:${item.slug}`}>
+                <a className="card-link" href={`/anime/${item.source}/${item.slug}`}>
                 <div className="poster-wrap">
                   <PosterImage src={item.posterUrl} alt={item.title} loading={index > 5 ? 'lazy' : 'eager'} />
                   <span className="quality-badge">HD</span>

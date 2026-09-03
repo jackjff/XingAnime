@@ -1,11 +1,14 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { SiteHeader } from './site-header';
 import { PosterImage } from './poster-image';
 
 type Episode = { id: string; title: string; number: number | null; releaseDate: string | null };
-type Detail = { source: string; slug: string; title: string; posterUrl: string | null; synopsis: string | null; status: string | null; type: string | null; studio: string | null; genres: string[]; episodes: Episode[]; availableSources?: Array<{ source: string; slug: string }> };
+type Detail = { source: string; slug: string; title: string; posterUrl: string | null; synopsis: string | null; status: string | null; type: string | null; studio: string | null; genres: string[]; episodes: Episode[]; firstEpisodeId?: string | null; latestEpisodeId?: string | null; availableSources?: Array<{ source: string; slug: string }> };
+type EpisodePageMeta = { page: number; limit: number; total: number; pageCount: number; hasNext: boolean; hasPrevious: boolean };
+type EpisodePageResponse = { success: boolean; data: Episode[] | null; meta: EpisodePageMeta; error: { message?: string } | null };
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
 const providers = [
@@ -16,45 +19,66 @@ const providers = [
 const episodesPerPage = 50;
 
 export function AnimeDetailClient({ source, slug }: { source: string; slug: string }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedPage = Number.parseInt(searchParams.get('episodePage') ?? '1', 10);
+  const episodePage = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
   const [detail, setDetail] = useState<Detail | null>(null);
+  const [episodes, setEpisodes] = useState<Episode[]>([]);
+  const [episodeMeta, setEpisodeMeta] = useState<EpisodePageMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [episodeError, setEpisodeError] = useState<string | null>(null);
+  const [episodeLoading, setEpisodeLoading] = useState(false);
   const [episodeQuery, setEpisodeQuery] = useState('');
-  const [episodePage, setEpisodePage] = useState(1);
   const activeSources = detail?.availableSources?.length ? detail.availableSources : detail ? [{ source: detail.source, slug: detail.slug }] : [];
-  const firstEpisode = detail?.episodes[0] ?? null;
-  const filteredEpisodes = useMemo(() => {
-    const episodes = detail?.episodes ?? [];
-    const query = episodeQuery.trim().toLowerCase();
-    if (!query) return episodes;
-    return episodes.filter((episode) => episode.title.toLowerCase().includes(query) || String(episode.number ?? '').includes(query));
-  }, [detail?.episodes, episodeQuery]);
-  const episodePageCount = Math.max(1, Math.ceil(filteredEpisodes.length / episodesPerPage));
-  const visibleEpisodes = filteredEpisodes.slice((episodePage - 1) * episodesPerPage, episodePage * episodesPerPage);
-  const firstVisibleEpisode = filteredEpisodes.length === 0 ? 0 : (episodePage - 1) * episodesPerPage + 1;
-  const lastVisibleEpisode = Math.min(episodePage * episodesPerPage, filteredEpisodes.length);
+  const firstEpisode = detail?.firstEpisodeId ? { id: detail.firstEpisodeId } : episodes[0] ?? null;
+  const episodeTotal = episodeMeta?.total ?? 0;
+  const episodePageCount = episodeMeta?.pageCount ?? 0;
+  const firstVisibleEpisode = episodeTotal === 0 ? 0 : ((episodeMeta?.page ?? episodePage) - 1) * (episodeMeta?.limit ?? episodesPerPage) + 1;
+  const lastVisibleEpisode = episodeTotal === 0 ? 0 : firstVisibleEpisode + episodes.length - 1;
 
   useEffect(() => {
+    const controller = new AbortController();
+    setDetail(null);
+    setEpisodes([]);
+    setEpisodeMeta(null);
+    setError(null);
+    setEpisodeError(null);
     const load = async () => {
       try {
-        const response = await fetch(`${apiBaseUrl}/api/v1/sources/${encodeURIComponent(source)}/anime/${encodeURIComponent(slug)}`);
+        const response = await fetch(`${apiBaseUrl}/api/v1/sources/${encodeURIComponent(source)}/anime/${encodeURIComponent(slug)}?includeEpisodes=false`, { signal: controller.signal });
         if (!response.ok) throw new Error('Detail anime tidak tersedia');
         const payload = await response.json() as { success: boolean; data: Detail; error?: { message?: string } };
         if (!payload.success) throw new Error(payload.error?.message ?? 'Gagal memuat detail');
         setDetail(payload.data);
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : 'Gagal memuat detail');
+        if (!(cause instanceof DOMException && cause.name === 'AbortError')) setError(cause instanceof Error ? cause.message : 'Gagal memuat detail');
       }
     };
     void load();
+    return () => controller.abort();
   }, [source, slug]);
 
   useEffect(() => {
-    setEpisodePage(1);
-  }, [episodeQuery, source, slug]);
+    if (!detail) return;
+    const controller = new AbortController();
+    const params = new URLSearchParams({ page: String(episodePage), limit: String(episodesPerPage) });
+    if (episodeQuery.trim()) params.set('q', episodeQuery.trim());
+    setEpisodeLoading(true);
+    setEpisodeError(null);
+    fetch(`${apiBaseUrl}/api/v1/sources/${encodeURIComponent(source)}/anime/${encodeURIComponent(slug)}/episodes?${params.toString()}`, { signal: controller.signal })
+      .then(async (response) => {
+        const payload = await response.json() as EpisodePageResponse;
+        if (!response.ok || !payload.success || !payload.data) throw new Error(payload.error?.message ?? 'Daftar episode tidak tersedia');
+        return payload;
+      })
+      .then((payload) => { setEpisodes(payload.data ?? []); setEpisodeMeta(payload.meta); })
+      .catch((cause) => { if (!(cause instanceof DOMException && cause.name === 'AbortError')) setEpisodeError(cause instanceof Error ? cause.message : 'Daftar episode tidak tersedia'); })
+      .finally(() => { if (!controller.signal.aborted) setEpisodeLoading(false); });
+    return () => controller.abort();
+  }, [detail, episodePage, episodeQuery, slug, source]);
 
-  useEffect(() => {
-    setEpisodePage((current) => Math.min(current, episodePageCount));
-  }, [episodePageCount]);
+  const currentEpisodePage = episodeMeta?.page ?? episodePage;
 
   return (
     <main className="app-page">
@@ -88,7 +112,7 @@ export function AnimeDetailClient({ source, slug }: { source: string; slug: stri
                   {detail.genres.map((genre) => <span key={genre}>{genre}</span>)}
                 </div>
                 <div className="detail-stats">
-                  <div><strong>{detail.episodes.length}</strong><span>Episode</span></div>
+                  <div><strong>{episodeTotal}</strong><span>Episode</span></div>
                   <div><strong>{detail.status ?? '—'}</strong><span>Status</span></div>
                   <div><strong>{activeSources.length}</strong><span>Sumber</span></div>
                 </div>
@@ -99,13 +123,13 @@ export function AnimeDetailClient({ source, slug }: { source: string; slug: stri
               </div>
             </section>
             <section className="episodes-section" id="episodes">
-              <div className="section-heading"><div><p className="eyebrow">WATCH LIST</p><h2>Daftar Episode <span className="count-label">{detail.episodes.length}</span></h2></div><span className="section-note">Pilih episode untuk mulai menonton</span></div>
-              {detail.episodes.length === 0 ? <div className="status-card">Episode belum tersedia.</div> : <>
+              <div className="section-heading"><div><p className="eyebrow">WATCH LIST</p><h2>Daftar Episode <span className="count-label">{episodeTotal}</span></h2></div><span className="section-note">Pilih episode untuk mulai menonton</span></div>
+              {episodeError ? <div className="status-card error-card">{episodeError}</div> : episodeLoading && !episodeMeta ? <div className="status-card">Memuat daftar episode...</div> : episodeTotal === 0 ? <div className="status-card">Episode belum tersedia.</div> : <>
                 <div className="episode-browser">
-                  <label className="episode-search"><span className="sr-only">Cari episode</span><input type="search" value={episodeQuery} onChange={(event) => { setEpisodeQuery(event.target.value); setEpisodePage(1); }} placeholder="Cari nomor atau judul episode" /></label>
-                  <div className="episode-browser-meta"><span>{filteredEpisodes.length === 0 ? 'Tidak ada episode yang cocok.' : `Menampilkan ${firstVisibleEpisode}–${lastVisibleEpisode} dari ${filteredEpisodes.length} episode`}</span><div className="episode-pagination"><button type="button" onClick={() => setEpisodePage(1)} disabled={episodePage === 1}>Awal</button><button type="button" onClick={() => setEpisodePage((current) => Math.max(1, current - 1))} disabled={episodePage === 1}>←</button><span>Halaman {episodePage} / {episodePageCount}</span><button type="button" onClick={() => setEpisodePage((current) => Math.min(episodePageCount, current + 1))} disabled={episodePage === episodePageCount}>→</button><button type="button" onClick={() => setEpisodePage(episodePageCount)} disabled={episodePage === episodePageCount}>Terbaru</button></div></div>
+                  <label className="episode-search"><span className="sr-only">Cari episode</span><input type="search" value={episodeQuery} onChange={(event) => { setEpisodeQuery(event.target.value); router.replace('?episodePage=1#episodes', { scroll: false }); }} placeholder="Cari nomor atau judul episode" /></label>
+                  <div className="episode-browser-meta"><span>{episodes.length === 0 ? 'Tidak ada episode yang cocok.' : `Menampilkan ${firstVisibleEpisode}–${lastVisibleEpisode} dari ${episodeTotal} episode`}</span><div className="episode-pagination"><a id="episode-page-first" className={currentEpisodePage === 1 ? 'disabled' : ''} aria-label="Episode pertama" aria-disabled={currentEpisodePage === 1} href={currentEpisodePage === 1 ? undefined : '?episodePage=1#episodes'}>Awal</a><a id="episode-page-prev" className={currentEpisodePage === 1 ? 'disabled' : ''} aria-label="Halaman episode sebelumnya" aria-disabled={currentEpisodePage === 1} href={currentEpisodePage === 1 ? undefined : `?episodePage=${currentEpisodePage - 1}#episodes`}>←</a><span aria-live="polite">Halaman {currentEpisodePage} / {episodePageCount}</span><a id="episode-page-next" className={currentEpisodePage === episodePageCount ? 'disabled' : ''} aria-label="Halaman episode berikutnya" aria-disabled={currentEpisodePage === episodePageCount} href={currentEpisodePage === episodePageCount ? undefined : `?episodePage=${currentEpisodePage + 1}#episodes`}>→</a><a id="episode-page-latest" className={currentEpisodePage === episodePageCount ? 'disabled' : ''} aria-label="Episode terbaru" aria-disabled={currentEpisodePage === episodePageCount} href={currentEpisodePage === episodePageCount ? undefined : `?episodePage=${episodePageCount}#episodes`}>Terbaru</a></div></div>
                 </div>
-                {filteredEpisodes.length > 0 && <div className="episode-list">{visibleEpisodes.map((episode) => <a className={episode.id === firstEpisode?.id ? 'episode-row featured-episode' : 'episode-row'} href={`/watch/${source}/${episode.id}`} key={episode.id}><PosterImage className="episode-poster" src={detail.posterUrl} alt="" /><span className="episode-number">{episode.number ?? '—'}</span><span className="episode-title"><b>{episode.title}</b><small>{episode.id === firstEpisode?.id ? 'Episode terbaru yang tersedia' : 'Subtitle Indonesia'}</small></span><span className="episode-date">{episode.releaseDate ?? ''}</span><span className="episode-play">▶</span></a>)}</div>}
+                {episodes.length > 0 && <div className="episode-list">{episodes.map((episode) => <a className={episode.id === detail.latestEpisodeId ? 'episode-row featured-episode' : 'episode-row'} href={`/watch/${source}/${episode.id}`} key={episode.id}><PosterImage className="episode-poster" src={detail.posterUrl} alt="" /><span className="episode-number">{episode.number ?? '—'}</span><span className="episode-title"><b>{episode.title}</b><small>{episode.id === firstEpisode?.id ? 'Episode terbaru yang tersedia' : 'Subtitle Indonesia'}</small></span><span className="episode-date">{episode.releaseDate ?? ''}</span><span className="episode-play">▶</span></a>)}</div>}
               </>}
             </section>
           </>

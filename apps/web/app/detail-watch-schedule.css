@@ -126,9 +126,9 @@
 .episode-search input::placeholder { color: #777276; }
 .episode-browser-meta { align-items: center; color: var(--muted); display: flex; font-size: 11px; gap: 16px; justify-content: space-between; margin-top: 12px; }
 .episode-pagination { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
-.episode-pagination button { background: var(--surface); border: 1px solid var(--line); border-radius: 7px; color: #d8ccc4; cursor: pointer; font-size: 10px; min-height: 32px; padding: 0 10px; }
-.episode-pagination button:hover:not(:disabled) { border-color: rgba(255, 138, 61, .5); color: var(--orange-bright); }
-.episode-pagination button:disabled { cursor: not-allowed; opacity: .35; }
+.episode-pagination button, .episode-pagination a { background: var(--surface); border: 1px solid var(--line); border-radius: 7px; color: #d8ccc4; cursor: pointer; font-size: 10px; min-height: 32px; padding: 0 10px; text-decoration: none; }
+.episode-pagination button:hover:not(:disabled), .episode-pagination a:hover:not(.disabled) { border-color: rgba(255, 138, 61, .5); color: var(--orange-bright); }
+.episode-pagination button:disabled, .episode-pagination a.disabled { cursor: not-allowed; opacity: .35; pointer-events: none; }
 .episode-pagination span { color: var(--text); font-size: 10px; min-width: 92px; text-align: center; }
 .sr-only { height: 1px; margin: -1px; overflow: hidden; position: absolute; width: 1px; clip: rect(0, 0, 0, 0); }
 
@@ -143,7 +143,7 @@
 .filter-group { align-items: center; display: flex; gap: 16px; }
 .filter-label { color: var(--muted); flex: 0 0 48px; font-size: 10px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase; }
 .filter-pills { display: flex; flex-wrap: wrap; gap: 7px; }
-.filter-pill { background: transparent; border: 1px solid transparent; border-radius: 99px; color: #aaa4a1; cursor: pointer; font-size: 11px; padding: 7px 11px; transition: background .2s, border-color .2s, color .2s; }
+.filter-pill { background: transparent; border: 1px solid transparent; border-radius: 99px; color: #aaa4a1; cursor: pointer; display: inline-block; font-size: 11px; padding: 7px 11px; text-decoration: none; transition: background .2s, border-color .2s, color .2s; }
 .filter-pill:hover { border-color: rgba(255, 138, 61, .35); color: var(--text); }
 .filter-pill.active { background: rgba(255, 138, 61, .14); border-color: rgba(255, 138, 61, .42); color: var(--orange-bright); }
 .filter-pill b { color: inherit; font-size: 10px; margin-left: 4px; opacity: .65; }
@@ -185,6 +185,31 @@
 .context-source b { color: #ded2ca; font-size: 11px; text-transform: uppercase; }
 .context-source-link { color: var(--orange-bright); font-size: 10px; font-weight: 700; }
 
+.catalog-shell { padding-top: 30px; }
+.catalog-search { background: rgba(255, 255, 255, .025); border: 1px solid var(--line); border-radius: 12px; margin: 20px 0; padding: 16px; }
+.catalog-search label { color: var(--muted); display: block; font-size: 11px; font-weight: 700; margin-bottom: 8px; }
+.catalog-search > div { display: flex; gap: 8px; }
+.catalog-search input { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; color: var(--text); min-height: 42px; min-width: 0; padding: 0 12px; width: min(100%, 520px); }
+.catalog-search .primary-button { border: 0; cursor: pointer; }
+.catalog-filter-row { background: rgba(255, 255, 255, .025); border: 1px solid var(--line); border-radius: 12px; display: flex; flex-direction: column; gap: 14px; margin-bottom: 34px; padding: 16px; }
+.catalog-filter-group { align-items: flex-start; display: flex; gap: 16px; }
+.catalog-letter-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.catalog-letter-list .filter-pill { min-width: 31px; padding: 7px 8px; text-align: center; }
+.catalog-card { min-width: 0; }
+.catalog-pagination { align-items: center; display: flex; gap: 18px; justify-content: center; margin-top: 30px; }
+.catalog-pagination .primary-button, .catalog-pagination .secondary-button { display: inline-flex; }
+.history-shell h1, .catalog-shell h1 { font-size: clamp(32px, 4vw, 56px); letter-spacing: -2.5px; margin: 0; }
+.history-grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.history-card { align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; display: flex; gap: 12px; justify-content: space-between; padding: 10px; }
+.history-card-link { align-items: center; display: flex; gap: 12px; min-width: 0; }
+.history-poster { border-radius: 6px; height: 74px; object-fit: cover; width: 50px; }
+.history-card-copy { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.history-card-copy strong { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-card-copy small { color: var(--muted); font-size: 10px; }
+.history-source { color: var(--orange-bright); font-size: 9px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
+.history-remove { background: transparent; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); cursor: pointer; font-size: 10px; padding: 7px 9px; }
+.history-remove:hover { border-color: rgba(255, 112, 77, .45); color: #ffaea0; }
+
 @media (max-width: 900px) {
   .schedule-intro { grid-template-columns: 1fr; }
   .schedule-summary { max-width: 260px; }
@@ -192,6 +217,12 @@
 }
 
 @media (max-width: 580px) {
+  .catalog-filter-group { flex-direction: column; gap: 8px; }
+  .catalog-search > div { align-items: stretch; flex-direction: column; }
+  .catalog-search .primary-button { justify-content: center; }
+  .catalog-pagination { align-items: stretch; flex-direction: column; gap: 10px; text-align: center; }
+  .history-grid { grid-template-columns: 1fr; }
+  .history-card-copy strong { max-width: 170px; }
   .catalog-heading-side { align-items: flex-start; flex-direction: column; gap: 4px; }
   .hero-trust { max-width: 230px; line-height: 1.5; }
   .detail-hero { grid-template-columns: 90px 1fr; padding: 16px; }
@@ -203,7 +234,7 @@
   .section-note { display: none; }
   .episode-browser-meta { align-items: flex-start; flex-direction: column; gap: 12px; }
   .episode-pagination { justify-content: flex-start; width: 100%; }
-  .episode-pagination button { flex: 1 0 auto; }
+  .episode-pagination button, .episode-pagination a { flex: 1 0 auto; }
   .schedule-controls { padding: 15px; }
   .filter-group { align-items: start; flex-direction: column; gap: 8px; }
   .filter-label { flex-basis: auto; }
