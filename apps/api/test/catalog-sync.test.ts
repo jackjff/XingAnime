@@ -24,7 +24,9 @@ describe('PostgresCatalogRepository', () => {
     await repository.upsertSourceHome('samehadaku', [sourceItem()]);
 
     expect(query).toHaveBeenCalledTimes(2);
-    expect(query.mock.calls[0][0]).toContain('CASE');
+    expect(query.mock.calls[0][0]).toContain('WHEN $3 IS NOT NULL');
+    expect(query.mock.calls[0][0]).toContain('EXCLUDED.poster_url IS NOT NULL');
+    expect(query.mock.calls[0][0]).toContain('EXCLUDED.poster_url ~');
     expect(query.mock.calls[0][0]).toContain('anilist');
     expect(query.mock.calls[0][1]).toEqual(['liar-game', 'Liar Game', 'https://img.example/liar.jpg', 'Sabtu']);
     expect(query.mock.calls[1][1]).toEqual(['anime-1', 'samehadaku', 'liar-game', 'liar-game']);

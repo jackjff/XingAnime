@@ -18,6 +18,7 @@ type HomeRow = {
   title: string;
   poster_url: string | null;
   release_day: string | null;
+  latest_episode: string | null;
 };
 
 type DetailRow = {
@@ -139,11 +140,16 @@ export class PostgresCatalogRepository {
     for (const item of items) {
       const anime = await this.database.query<{ id: string }>(
         `INSERT INTO anime (canonical_slug, title, poster_url, release_day, visibility, published_at)
-         VALUES ($1, $2, $3, $4, 'published', NOW())
+         VALUES ($1, $2, CASE
+           WHEN $3 IS NOT NULL
+            AND ($3 ~ '^https://s[0-9]+\\.anilist\\.co/' OR $3 ~ '^https://img\\.anili\\.st/') THEN $3
+           ELSE NULL
+         END, $4, 'published', NOW())
          ON CONFLICT (canonical_slug) DO UPDATE SET
            title = EXCLUDED.title,
            poster_url = CASE
-             WHEN EXCLUDED.poster_url IS NOT NULL THEN EXCLUDED.poster_url
+             WHEN EXCLUDED.poster_url IS NOT NULL
+              AND (EXCLUDED.poster_url ~ '^https://s[0-9]+\\.anilist\\.co/' OR EXCLUDED.poster_url ~ '^https://img\\.anili\\.st/') THEN EXCLUDED.poster_url
              WHEN anime.poster_url IS NOT NULL
                 AND anime.poster_url !~ '^https://s[0-9]+\\.anilist\\.co/'
                 AND anime.poster_url !~ '^https://img\\.anili\\.st/' THEN NULL
@@ -175,10 +181,17 @@ export class PostgresCatalogRepository {
 
   async listSourceHome(source: SourceId, limit = 50): Promise<SourceAnimeSummary[]> {
     const result = await this.database.query<HomeRow & { provider_anime_id: string }>(
-      `SELECT src.provider_slug, src.provider_anime_id, a.canonical_slug, a.title, a.poster_url, a.release_day
+      `SELECT src.provider_slug, src.provider_anime_id, a.canonical_slug, a.title, a.poster_url, a.release_day,
+              MAX(e.episode_number) AS latest_episode
        FROM anime AS a
        JOIN anime_sources AS src ON src.anime_id = a.id AND src.provider_name = $1
+       JOIN episodes AS e ON e.source_id = src.id
+         AND e.visibility = 'published'
+         AND e.episode_number > 0
+         AND e.provider_episode_id NOT LIKE 'pembatas-%'
+         AND COALESCE(e.episode_title, '') NOT ILIKE '%dalam proses%'
        WHERE a.visibility = 'published'
+       GROUP BY src.provider_slug, src.provider_anime_id, a.canonical_slug, a.title, a.poster_url, a.release_day, a.featured, a.updated_at
        ORDER BY a.featured DESC, a.updated_at DESC
        LIMIT $2`,
       [source, limit]
@@ -189,7 +202,7 @@ export class PostgresCatalogRepository {
       detailSlug: row.provider_slug ?? row.provider_anime_id,
       title: row.title,
       posterUrl: row.poster_url,
-      latestEpisode: null,
+      latestEpisode: row.latest_episode === null ? null : Number(row.latest_episode),
       releaseDay: row.release_day
     }));
   }
@@ -205,9 +218,13 @@ export class PostgresCatalogRepository {
               a.title, a.featured, a.poster_url, a.release_day, MAX(e.episode_number) AS latest_episode
        FROM anime AS a
        JOIN anime_sources AS src ON src.anime_id = a.id AND src.source_status <> 'disabled'
-       LEFT JOIN episodes AS e ON e.source_id = src.id AND e.visibility = 'published'
+       LEFT JOIN episodes AS e ON e.source_id = src.id
+         AND e.visibility = 'published'
+         AND e.episode_number > 0
+         AND e.provider_episode_id NOT LIKE 'pembatas-%'
+         AND COALESCE(e.episode_title, '') NOT ILIKE '%dalam proses%'
        WHERE a.visibility = 'published'
-         AND ($1::text IS NULL OR a.title ILIKE '%' || $1 || '%' OR a.canonical_slug ILIKE '%' || $1 || '%' OR src.provider_slug ILIKE '%' || $1 || '%')
+         AND ($1::text IS NULL OR a.title ILIKE '%' || $1 || '%' OR a.canonical_slug ILIKE '%' || $1 || '%')
          AND ($2::text IS NULL OR UPPER(LEFT(a.title, 1)) = $2)
          AND ($3::text IS NULL OR src.provider_name = $3)
        GROUP BY src.provider_name, src.provider_slug, src.provider_anime_id, a.title, a.featured, a.poster_url, a.release_day
@@ -238,6 +255,9 @@ export class PostgresCatalogRepository {
        WHERE src.provider_name = $1
          AND (src.provider_slug = $2 OR src.provider_anime_id = $2)
          AND e.visibility = 'published'
+         AND e.episode_number > 0
+         AND e.provider_episode_id NOT LIKE 'pembatas-%'
+         AND COALESCE(e.episode_title, '') NOT ILIKE '%dalam proses%'
          AND ($3::text IS NULL OR e.provider_episode_id ILIKE '%' || $3 || '%' OR e.episode_title ILIKE '%' || $3 || '%' OR e.episode_number::text ILIKE '%' || $3 || '%')
        ORDER BY e.episode_number ASC, e.provider_episode_id ASC
        LIMIT $4 OFFSET $5`,
@@ -256,8 +276,8 @@ export class PostgresCatalogRepository {
     const includeEpisodes = options.includeEpisodes !== false;
     const result = await this.database.query<DetailRow>(
       `SELECT a.id AS anime_id, a.title, a.poster_url, a.synopsis, a.status, s.provider_slug,
-              (SELECT e_first.provider_episode_id FROM episodes AS e_first WHERE e_first.source_id = s.id AND e_first.visibility = 'published' AND e_first.provider_episode_id NOT LIKE 'pembatas-%' AND COALESCE(e_first.episode_title, '') NOT ILIKE '%dalam proses%' ORDER BY e_first.episode_number ASC, e_first.provider_episode_id ASC LIMIT 1) AS first_episode_id,
-              (SELECT e_latest.provider_episode_id FROM episodes AS e_latest WHERE e_latest.source_id = s.id AND e_latest.visibility = 'published' ORDER BY e_latest.episode_number DESC, e_latest.provider_episode_id DESC LIMIT 1) AS latest_episode_id
+              (SELECT e_first.provider_episode_id FROM episodes AS e_first WHERE e_first.source_id = s.id AND e_first.visibility = 'published' AND e_first.episode_number > 0 AND e_first.provider_episode_id NOT LIKE 'pembatas-%' AND COALESCE(e_first.episode_title, '') NOT ILIKE '%dalam proses%' ORDER BY e_first.episode_number ASC, e_first.provider_episode_id ASC LIMIT 1) AS first_episode_id,
+              (SELECT e_latest.provider_episode_id FROM episodes AS e_latest WHERE e_latest.source_id = s.id AND e_latest.visibility = 'published' AND e_latest.episode_number > 0 AND e_latest.provider_episode_id NOT LIKE 'pembatas-%' AND COALESCE(e_latest.episode_title, '') NOT ILIKE '%dalam proses%' ORDER BY e_latest.episode_number DESC, e_latest.provider_episode_id DESC LIMIT 1) AS latest_episode_id
        FROM anime AS a
        JOIN anime_sources AS s ON s.anime_id = a.id
        WHERE s.provider_name = $1 AND (s.provider_slug = $2 OR s.provider_anime_id = $3)
@@ -274,6 +294,9 @@ export class PostgresCatalogRepository {
          JOIN anime_sources AS s ON s.id = e.source_id
          WHERE s.provider_name = $1 AND (s.provider_slug = $2 OR s.provider_anime_id = $3)
            AND e.visibility = 'published'
+           AND e.episode_number > 0
+           AND e.provider_episode_id NOT LIKE 'pembatas-%'
+           AND COALESCE(e.episode_title, '') NOT ILIKE '%dalam proses%'
          ORDER BY e.episode_number ASC`,
         [source, slug, slug]
       )
@@ -339,7 +362,11 @@ export class PostgresCatalogRepository {
          FROM episodes AS e
          JOIN anime_sources AS s ON s.id = e.source_id
          JOIN anime AS a ON a.id = e.anime_id
-         WHERE s.provider_name = $1 AND e.visibility = 'published'
+         WHERE s.provider_name = $1
+           AND e.visibility = 'published'
+           AND e.episode_number > 0
+           AND e.provider_episode_id NOT LIKE 'pembatas-%'
+           AND COALESCE(e.episode_title, '') NOT ILIKE '%dalam proses%'
        )
        SELECT provider_episode_id, episode_title, episode_number, anime_slug, poster_url, previous_episode_id, next_episode_id
        FROM ordered_episodes
@@ -363,6 +390,7 @@ export class PostgresCatalogRepository {
   }
 
   async upsertEpisode(source: SourceId, animeSlug: string, episode: { id: string; title: string; number: number | null }): Promise<void> {
+    if (episode.number === null || !Number.isFinite(episode.number) || episode.number <= 0) return;
     await this.database.query(
       `INSERT INTO episodes (anime_id, source_id, episode_number, episode_title, provider_episode_id, provider_slug, visibility, published_at)
        SELECT a.id, s.id, $4, $5, $3, $3, 'published', NOW()
@@ -425,10 +453,17 @@ export class PostgresCatalogRepository {
 
   async listHome(limit = 15): Promise<AnimeSummary[]> {
     const result = await this.database.query<HomeRow>(
-      `SELECT src.provider_slug, a.canonical_slug, a.title, a.poster_url, a.release_day
+      `SELECT src.provider_slug, a.canonical_slug, a.title, a.poster_url, a.release_day,
+              MAX(e.episode_number) AS latest_episode
        FROM anime AS a
        JOIN anime_sources AS src ON src.anime_id = a.id AND src.provider_name = 'otakudesu'
+       JOIN episodes AS e ON e.source_id = src.id
+         AND e.visibility = 'published'
+         AND e.episode_number > 0
+         AND e.provider_episode_id NOT LIKE 'pembatas-%'
+         AND COALESCE(e.episode_title, '') NOT ILIKE '%dalam proses%'
        WHERE a.visibility = 'published'
+       GROUP BY src.provider_slug, a.canonical_slug, a.title, a.poster_url, a.release_day, a.featured, a.updated_at
        ORDER BY a.featured DESC, a.updated_at DESC
        LIMIT $1`,
       [limit]
@@ -437,7 +472,7 @@ export class PostgresCatalogRepository {
       slug: row.provider_slug ?? row.canonical_slug,
       title: row.title,
       posterUrl: row.poster_url,
-      latestEpisode: null,
+      latestEpisode: row.latest_episode === null ? null : Number(row.latest_episode),
       releaseDay: row.release_day,
       source: 'sanka'
     }));

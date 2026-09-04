@@ -25,7 +25,7 @@ export type AnimeSummary = {
 
 export function normalizeHome(response: SankaHomeResponse): AnimeSummary[] {
   return (response.data?.ongoing?.animeList ?? [])
-    .filter((anime) => anime.animeId && anime.title)
+    .filter((anime) => anime.animeId && anime.title && typeof anime.episodes === 'number' && anime.episodes > 0)
     .map((anime) => ({
       slug: anime.animeId as string,
       title: anime.title as string,

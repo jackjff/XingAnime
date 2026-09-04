@@ -23,6 +23,26 @@ export function filterScheduleGroups<T extends ScheduleViewItem>(groups: Array<{
     .filter((group) => group.items.length > 0);
 }
 
+export type CatalogRequestOptions = {
+  query?: string;
+  letter?: string;
+  source?: string;
+  page: number;
+  limit: number;
+};
+
+export function buildCatalogApiUrl(apiBaseUrl: string, options: CatalogRequestOptions): string {
+  const query = options.query?.trim();
+  const path = query ? '/api/v1/catalog/search' : '/api/v1/catalog';
+  const params = new URLSearchParams();
+  if (query) params.set('q', query);
+  if (options.letter) params.set('letter', options.letter);
+  if (options.source) params.set('source', options.source);
+  params.set('page', String(options.page));
+  params.set('limit', String(options.limit));
+  return `${apiBaseUrl.replace(/\/$/, '')}${path}?${params.toString()}`;
+}
+
 export function getPageWindow<T>(items: T[], requestedPage: number, pageSize: number) {
   const pageCount = Math.max(1, Math.ceil(items.length / pageSize));
   const page = Math.min(Math.max(1, requestedPage), pageCount);

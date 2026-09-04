@@ -3,7 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { AnimeSummary } from './providers/sanka/mapper.js';
 import type { HomeResult } from './providers/sanka/cached-client.js';
 import type { AnimeSourceProvider, CatalogQuery, EpisodeQuery, PageResult, SourceAnimeDetail, SourceAnimeSummary, SourceEpisodeDetail, SourceEpisodeSummary, SourceId, SourceScheduleDay } from './providers/source-types.js';
-import { isBlockedPosterUrl } from './providers/poster-enricher.js';
+import { isBlockedPosterUrl, enrichSourcePosters } from './providers/poster-enricher.js';
 
 type HomeClient = {
   getHome(): Promise<AnimeSummary[]>;
@@ -87,7 +87,12 @@ export function buildApp(dependencies: AppDependencies): FastifyInstance {
       if (configuredSources.length > 0) {
         const results = await Promise.allSettled(configuredSources.map(async ({ id }) => {
           const stored = await dependencies.catalogRepository?.listSourceHome?.(id, 15);
-          if (stored?.length) return { source: id, data: stored as SourceAnimeSummary[], storage: 'postgres' as const };
+          if (stored?.length) {
+            const data = dependencies.posterResolver
+              ? await enrichSourcePosters(stored as SourceAnimeSummary[], dependencies.posterResolver)
+              : stored as SourceAnimeSummary[];
+            return { source: id, data, storage: 'postgres' as const };
+          }
           return { source: id, data: await dependencies.sourceProviders?.[id]?.getHome() ?? [], storage: 'provider-fallback' as const };
         }));
         const providers = Object.fromEntries(results.map((result, index) => [
@@ -154,7 +159,7 @@ export function buildApp(dependencies: AppDependencies): FastifyInstance {
     if (!query.query) return reply.code(400).send({ success: false, data: null, meta: {}, error: { code: 'MISSING_QUERY', message: 'Parameter q wajib diisi' } });
     try {
       if (!dependencies.catalogRepository?.listCatalog) throw new Error('Catalog repository unavailable');
-      const result = await dependencies.catalogRepository.listCatalog({ ...query, letter: undefined });
+      const result = await dependencies.catalogRepository.listCatalog(query);
       return { success: true, data: result.items, meta: { ...result, items: undefined, storage: 'postgres' }, error: null };
     } catch (error) {
       app.log.error(error);

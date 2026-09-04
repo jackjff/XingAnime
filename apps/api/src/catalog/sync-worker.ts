@@ -64,9 +64,8 @@ export class CatalogSyncWorker {
       const runId = await this.repository.startSyncRun?.(provider.source, 'schedule');
       try {
         const schedule = await provider.getSchedule();
-        const persistedSchedule = this.resolvePoster ? await this.enrichSchedule(schedule) : schedule;
-        await this.repository.upsertSchedule(provider.source, persistedSchedule);
-        const scheduleItems = persistedSchedule.reduce((total, group) => total + group.items.length, 0);
+        await this.repository.upsertSchedule(provider.source, schedule);
+        const scheduleItems = schedule.reduce((total, group) => total + group.items.length, 0);
         succeeded += 1;
         items += scheduleItems;
         await this.repository.updateProviderHealth?.(provider.source, 'healthy', 200);
@@ -85,13 +84,5 @@ export class CatalogSyncWorker {
   private async enrichPosters(items: SourceAnimeSummary[]): Promise<SourceAnimeSummary[]> {
     const { enrichSourcePosters } = await import('../providers/poster-enricher.js');
     return enrichSourcePosters(items, this.resolvePoster as PosterResolver);
-  }
-
-  private async enrichSchedule(groups: SourceScheduleDay[]): Promise<SourceScheduleDay[]> {
-    const { enrichSourcePosters } = await import('../providers/poster-enricher.js');
-    return Promise.all(groups.map(async (group) => {
-      const summaries = await enrichSourcePosters(group.items.map((item) => ({ ...item, detailSlug: item.slug, latestEpisode: null, releaseDay: group.day })), this.resolvePoster as PosterResolver);
-      return { ...group, items: summaries.map(({ detailSlug: _detailSlug, latestEpisode: _latestEpisode, releaseDay: _releaseDay, ...item }, index) => ({ ...item, episodeLabel: group.items[index]?.episodeLabel ?? null })) };
-    }));
   }
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.js';
 import type { AnimeSourceProvider, SourceId } from '../src/providers/source-types.js';
 
@@ -15,18 +15,18 @@ function provider(source: SourceId): AnimeSourceProvider {
 
 describe('catalog route contracts', () => {
   it('exposes search and A-Z catalog pages through stable JSON pagination', async () => {
+    const listCatalog = vi.fn(async (options: { letter?: string; page?: number; limit?: number }) => ({ items: [{ source: 'otakudesu' as const, slug: 'one', detailSlug: 'one', title: options.letter === 'O' ? 'One Piece' : 'Naruto', posterUrl: null, latestEpisode: 1, releaseDay: null }], page: options.page ?? 1, limit: options.limit ?? 24, total: 1, pageCount: 1, hasNext: false, hasPrevious: false }));
     const app = buildApp({
       homeClient: { getHome: async () => [] },
-      catalogRepository: {
-        listCatalog: async (options) => ({ items: [{ source: 'otakudesu', slug: 'one', detailSlug: 'one', title: options.letter === 'O' ? 'One Piece' : 'Naruto', posterUrl: null, latestEpisode: 1, releaseDay: null }], page: options.page ?? 1, limit: options.limit ?? 24, total: 1, pageCount: 1, hasNext: false, hasPrevious: false })
-      }
+      catalogRepository: { listCatalog }
     });
 
-    const search = await app.inject({ method: 'GET', url: '/api/v1/catalog/search?q=one&page=2&limit=12' });
+    const search = await app.inject({ method: 'GET', url: '/api/v1/catalog/search?q=one&letter=O&page=2&limit=12' });
     const az = await app.inject({ method: 'GET', url: '/api/v1/catalog?letter=O&page=1&limit=24' });
 
     expect(search.statusCode).toBe(200);
     expect(search.json().meta).toMatchObject({ page: 2, limit: 12, total: 1, pageCount: 1 });
+    expect(listCatalog).toHaveBeenNthCalledWith(1, expect.objectContaining({ query: 'one', letter: 'O', page: 2, limit: 12 }));
     expect(az.statusCode).toBe(200);
     expect(az.json().data[0].title).toBe('One Piece');
     await app.close();

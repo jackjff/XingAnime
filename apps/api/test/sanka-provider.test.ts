@@ -46,7 +46,7 @@ describe('SankaClient', () => {
       fetcher: vi.fn(async (url: string) => {
         calls.push(url);
         return new Response(JSON.stringify({
-          data: { ongoing: { animeList: [{ title: 'Example', animeId: 'example' }] } }
+          data: { ongoing: { animeList: [{ title: 'Example', animeId: 'example', episodes: 1 }] } }
         }), { status: 200 });
       })
     });
@@ -56,7 +56,7 @@ describe('SankaClient', () => {
         slug: 'example',
         title: 'Example',
         posterUrl: null,
-        latestEpisode: null,
+        latestEpisode: 1,
         releaseDay: null,
         source: 'sanka'
       }
