@@ -34,6 +34,45 @@ describe.each(Object.keys(fixtures) as SourceId[])('source normalizers: %s', (so
   });
 });
 
+describe('source data quality', () => {
+  it.each(['otakudesu', 'samehadaku', 'oploverz'] as SourceId[])('drops home entries without a positive episode number: %s', (source) => {
+    const payload = source === 'oploverz'
+      ? { anime_list: [{ title: 'No Episode', slug: 'no-episode', episode: 'Episode 0' }] }
+      : source === 'otakudesu'
+        ? { data: { ongoing: { animeList: [{ title: 'No Episode', animeId: 'no-episode', episodes: 0 }] } } }
+        : { data: { recent: { animeList: [{ title: 'No Episode', animeId: 'no-episode', episodes: '0' }] } } };
+
+    expect(normalizeSourceHome(source, payload)).toEqual([]);
+  });
+
+  it('does not infer latest episode from numbers in a title', () => {
+    const payloads: Record<SourceId, unknown> = {
+      otakudesu: { data: { ongoing: { animeList: [{ title: 'Blue Lock Season 2', animeId: 'blue-lock', poster: 'https://img/blue-lock.jpg' }] } } },
+      samehadaku: { data: { recent: { animeList: [{ title: 'Blue Lock Season 2', animeId: 'blue-lock', poster: 'https://img/blue-lock.jpg' }] } } },
+      oploverz: { anime_list: [{ title: 'Blue Lock Season 2', slug: 'blue-lock', poster: 'https://img/blue-lock.jpg' }] }
+    };
+
+    for (const source of Object.keys(payloads) as SourceId[]) {
+      expect(normalizeSourceHome(source, payloads[source])).toEqual([]);
+    }
+  });
+
+  it('drops episode detail entries with zero or missing episode numbers', () => {
+    const detail = normalizeSourceDetail('samehadaku', 'same', {
+      data: {
+        title: 'Same',
+        episodeList: [
+          { title: 'Episode 0', eps: 0, episodeId: 'same-0' },
+          { title: 'Episode 1', eps: 1, episodeId: 'same-1' },
+          { title: 'Episode tanpa nomor', episodeId: 'same-x' }
+        ]
+      }
+    });
+
+    expect(detail.episodes).toEqual([{ id: 'same-1', title: 'Episode 1', number: 1, releaseDate: null }]);
+  });
+});
+
 describe('playback embedding policy', () => {
   it('marks Desustream playback as external instead of silently embedding it', () => {
     const episode = normalizeSourceEpisode('otakudesu', 'sd-p2-episode-10-sub-indo', {

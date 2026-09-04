@@ -28,6 +28,8 @@ export type SourceAnimeDetail = {
   studio: string | null;
   genres: string[];
   episodes: SourceEpisodeSummary[];
+  firstEpisodeId?: string | null;
+  latestEpisodeId?: string | null;
   availableSources?: Array<{ source: SourceId; slug: string }>;
 };
 
@@ -67,6 +69,30 @@ export type SourceEpisodeDetail = {
   previousEpisodeId: string | null;
   nextEpisodeId: string | null;
   playback: PlaybackSource[];
+};
+
+export type PageResult<T> = {
+  items: T[];
+  page: number;
+  limit: number;
+  total: number;
+  pageCount: number;
+  hasNext: boolean;
+  hasPrevious: boolean;
+};
+
+export type CatalogQuery = {
+  query?: string;
+  letter?: string;
+  source?: SourceId;
+  page?: number;
+  limit?: number;
+};
+
+export type EpisodeQuery = {
+  query?: string;
+  page?: number;
+  limit?: number;
 };
 
 export type AnimeSourceProvider = {

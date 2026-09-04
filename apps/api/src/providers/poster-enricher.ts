@@ -25,33 +25,37 @@ export function isBlockedPosterUrl(url: string | null): boolean {
   }
 }
 
+async function enrichItems<T extends { title: string; posterUrl: string | null }>(items: T[], resolvePoster: PosterResolver): Promise<T[]> {
+  const resolvedPosters = new Map<string, Promise<string | null>>();
+  const getPoster = (title: string): Promise<string | null> => {
+    const existing = resolvedPosters.get(title);
+    if (existing) return existing;
+    const pending = Promise.resolve(resolvePoster(title)).catch(() => null);
+    resolvedPosters.set(title, pending);
+    return pending;
+  };
+
+  const enriched: T[] = [];
+  for (const item of items) {
+    if (!isBlockedPosterUrl(item.posterUrl)) {
+      enriched.push(item);
+      continue;
+    }
+    enriched.push({ ...item, posterUrl: await getPoster(item.title) });
+  }
+  return enriched;
+}
+
 export async function enrichPosters(
   items: AnimeSummary[],
   resolvePoster: PosterResolver
 ): Promise<AnimeSummary[]> {
-  return Promise.all(items.map(async (item) => {
-    if (!isBlockedPosterUrl(item.posterUrl)) return item;
-
-    try {
-      const posterUrl = await resolvePoster(item.title);
-      return posterUrl ? { ...item, posterUrl } : item;
-    } catch {
-      return item;
-    }
-  }));
+  return enrichItems(items, resolvePoster);
 }
 
 export async function enrichSourcePosters(
   items: SourceAnimeSummary[],
   resolvePoster: PosterResolver
 ): Promise<SourceAnimeSummary[]> {
-  return Promise.all(items.map(async (item) => {
-    if (!isBlockedPosterUrl(item.posterUrl)) return item;
-    try {
-      const posterUrl = await resolvePoster(item.title);
-      return { ...item, posterUrl };
-    } catch {
-      return { ...item, posterUrl: null };
-    }
-  }));
+  return enrichItems(items, resolvePoster);
 }

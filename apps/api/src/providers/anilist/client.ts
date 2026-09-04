@@ -11,6 +11,8 @@ type AniListResponse = {
 
 type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
 
+const sleep = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+
 const query = `query ($search: String) {
   Media(search: $search, type: ANIME) {
     coverImage { large medium }
@@ -32,6 +34,24 @@ function searchCandidates(title: string): string[] {
   const candidates = [title, normalized];
   const seasonAlias = normalized.replace(/\bS(\d+)\b/gi, (_match, value: string) => `${seasonOrdinal(value)} Season`);
   if (seasonAlias !== normalized) candidates.push(seasonAlias);
+  const spacedDewa = normalized.replace(/\bdewa\b/gi, 'de wa');
+  if (spacedDewa !== normalized) candidates.push(spacedDewa);
+  const romanSeasonAlias = normalized.replace(/\bSeason 2\b/i, 'II');
+  if (romanSeasonAlias !== normalized) candidates.push(romanSeasonAlias);
+  const ordinalSeasonAlias = normalized.replace(/\bSeason 2\b/i, '2nd Season');
+  if (ordinalSeasonAlias !== normalized) candidates.push(ordinalSeasonAlias);
+  if (/^Tensei shitara Slime Datta Ken(?: Season \d+)?$/i.test(normalized)) {
+    candidates.push('That Time I Got Reincarnated as a Slime');
+  }
+  if (/^Futsutsuka na Akujo de wa Gozaimasu ga$/i.test(spacedDewa)) {
+    candidates.push('Futsutsuka na Akujo de wa Gozaimasu ga: Suuguu Chouso Torikae Den');
+  }
+  if (/^Vigilante Boku no Hero Academia Illegals 2nd Season$/i.test(ordinalSeasonAlias)) {
+    candidates.push('Vigilante: Boku no Hero Academia ILLEGALS 2nd Season');
+  }
+  if (/^Degarashi Ouji$/i.test(normalized)) {
+    candidates.push('Saikyou Degarashi Ouji no Anyaku Teii Arasoi: Munou wo Enjiru SS Rank Ouji wa Koui Keishousen wo Kage kara Shihai suru');
+  }
 
   for (let index = 0; index <= words.length - 4; index += 1) {
     candidates.push(words.slice(index, index + 4).join(' '));
@@ -43,8 +63,30 @@ function searchCandidates(title: string): string[] {
 
 export class AniListPosterClient {
   private readonly cache = new Map<string, string | null>();
+  private nextRequestAt = 0;
+  private requestQueue: Promise<void> = Promise.resolve();
 
-  constructor(private readonly fetcher: Fetcher = (url, init) => fetch(url, init)) {}
+  constructor(
+    private readonly fetcher: Fetcher = (url, init) => fetch(url, init),
+    private readonly minRequestIntervalMs = 3500
+  ) {}
+
+  private async fetchCandidate(url: string, init: RequestInit): Promise<Response> {
+    let release!: () => void;
+    const previous = this.requestQueue;
+    this.requestQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      const waitFor = this.nextRequestAt - Date.now();
+      if (waitFor > 0) await sleep(waitFor);
+      this.nextRequestAt = Date.now() + this.minRequestIntervalMs;
+      return await this.fetcher(url, init);
+    } finally {
+      release();
+    }
+  }
 
   async resolve(title: string): Promise<string | null> {
     const cached = this.cache.get(title);
@@ -52,7 +94,7 @@ export class AniListPosterClient {
 
     for (const search of searchCandidates(title)) {
       try {
-        const response = await this.fetcher('https://graphql.anilist.co', {
+        const response = await this.fetchCandidate('https://graphql.anilist.co', {
           method: 'POST',
           headers: {
             accept: 'application/json',
@@ -60,6 +102,11 @@ export class AniListPosterClient {
           },
           body: JSON.stringify({ query, variables: { search } })
         });
+        if (response.status === 429) {
+          const retryAfter = Number(response.headers.get('retry-after'));
+          this.nextRequestAt = Date.now() + Math.max(this.minRequestIntervalMs, Number.isFinite(retryAfter) ? retryAfter * 1000 : 60_000);
+          return null;
+        }
         if (!response.ok) continue;
 
         const payload = (await response.json()) as AniListResponse;
@@ -75,7 +122,6 @@ export class AniListPosterClient {
       }
     }
 
-    this.cache.set(title, null);
     return null;
   }
 }

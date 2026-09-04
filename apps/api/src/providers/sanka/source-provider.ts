@@ -114,11 +114,12 @@ export function classifyPlaybackServerLabel(label: string): { mode: PlaybackMode
 
 function episodeSummary(source: SourceId, item: JsonObject): SourceEpisodeSummary | null {
   const id = stringValue(source === 'oploverz' ? item.slug : item.episodeId);
-  if (!id) return null;
+  const number = numberValue(source === 'oploverz' ? item.episode : item.eps ?? item.title);
+  if (!id || number === null || number <= 0) return null;
   return {
     id,
     title: stringValue(item.title) ?? id,
-    number: numberValue(source === 'oploverz' ? item.episode : item.eps ?? item.title),
+    number,
     releaseDate: stringValue(item.release_date ?? item.date ?? item.releasedOn)
   };
 }
@@ -141,13 +142,15 @@ export function normalizeSourceHome(source: SourceId, payload: unknown): SourceA
     const detailSlug = source === 'oploverz'
       ? slug.replace(/-episode-(?:\d+|end).*$/i, '')
       : slug;
+    const latestEpisode = numberValue(item.episode ?? item.episodes);
+    if (latestEpisode === null || latestEpisode <= 0) return [];
     return [{
       source,
       slug,
       detailSlug,
       title: source === 'oploverz' ? title.replace(/\s+Episode\s+.*/i, '').trim() : title,
       posterUrl: stringValue(item.poster),
-      latestEpisode: numberValue(item.episode ?? item.episodes ?? item.title),
+      latestEpisode,
       releaseDay: stringValue(item.releaseDay ?? item.releasedOn)
     }];
   });

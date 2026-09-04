@@ -125,3 +125,9 @@ CREATE INDEX IF NOT EXISTS idx_anime_sources_anime ON anime_sources (anime_id);
 CREATE INDEX IF NOT EXISTS idx_episodes_anime_number ON episodes (anime_id, episode_number);
 CREATE INDEX IF NOT EXISTS idx_playback_episode_active ON playback_sources (episode_id, is_active);
 CREATE INDEX IF NOT EXISTS idx_sync_runs_provider_started ON sync_runs (provider_name, started_at DESC);
+
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS idx_anime_title_trgm ON anime USING gin (title gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_anime_canonical_slug_trgm ON anime USING gin (canonical_slug gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_anime_sources_provider_slug_trgm ON anime_sources USING gin (provider_slug gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_episodes_search_trgm ON episodes USING gin ((provider_episode_id || ' ' || COALESCE(episode_title, '')) gin_trgm_ops);

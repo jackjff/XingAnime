@@ -1,8 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { SiteHeader } from '../components/site-header';
 import { PosterImage } from '../components/poster-image';
+import { filterScheduleGroups } from '../lib/catalog-view';
 
 type ScheduleItem = { source: string; slug: string; title: string; posterUrl: string | null; episodeLabel: string | null };
 type ScheduleDay = { day: string; items: ScheduleItem[] };
@@ -11,13 +13,26 @@ const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:400
 const sources = ['otakudesu', 'samehadaku', 'oploverz'];
 const dayOrder = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
 
+function scheduleHref(day: string, source: string) {
+  const params = new URLSearchParams();
+  if (day !== 'Semua') params.set('day', day);
+  if (source !== 'Semua') params.set('source', source);
+  const query = params.toString();
+  return query ? `/schedule?${query}` : '/schedule';
+}
+
 export default function SchedulePage() {
+  return <Suspense fallback={<main className="app-page"><SiteHeader active="schedule" /><div className="page-shell schedule-shell"><div className="status-card">Memuat jadwal...</div></div></main>}><ScheduleContent /></Suspense>;
+}
+
+function ScheduleContent() {
+  const searchParams = useSearchParams();
   const [groups, setGroups] = useState<ScheduleDay[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [failedSources, setFailedSources] = useState<string[]>([]);
-  const [activeDay, setActiveDay] = useState('Semua');
-  const [activeSource, setActiveSource] = useState('Semua');
+  const activeDay = searchParams.get('day') ?? 'Semua';
+  const activeSource = searchParams.get('source') ?? 'Semua';
 
   useEffect(() => {
     const load = async () => {
@@ -53,14 +68,8 @@ export default function SchedulePage() {
   }, []);
 
   const total = useMemo(() => groups.reduce((sum, group) => sum + group.items.length, 0), [groups]);
-  const availableDays = useMemo(() => ['Semua', ...groups.map((group) => group.day)], [groups]);
-  const filteredGroups = useMemo(() => groups
-    .filter((group) => activeDay === 'Semua' || group.day === activeDay)
-    .map((group) => ({
-      ...group,
-      items: group.items.filter((item) => activeSource === 'Semua' || item.source === activeSource)
-    }))
-    .filter((group) => group.items.length > 0), [activeDay, activeSource, groups]);
+  const availableDays = useMemo(() => ['Semua', ...new Set(groups.map((group) => group.day))], [groups]);
+  const filteredGroups = useMemo(() => filterScheduleGroups(groups, activeDay, activeSource), [activeDay, activeSource, groups]);
   const sourceCounts = useMemo(() => sources.map((source) => ({
     source,
     count: groups.reduce((sum, group) => sum + group.items.filter((item) => item.source === source).length, 0)
@@ -75,8 +84,8 @@ export default function SchedulePage() {
           <div className="schedule-summary"><strong>{loading ? '—' : total}</strong><span>judul terjadwal</span><small>Perbarui otomatis dari katalog tersimpan</small></div>
         </section>
         {!loading && !error && groups.length > 0 && <section className="schedule-controls" aria-label="Filter jadwal">
-          <div className="filter-group"><span className="filter-label">Hari</span><div className="filter-pills">{availableDays.map((day) => <button className={activeDay === day ? 'filter-pill active' : 'filter-pill'} key={day} onClick={() => setActiveDay(day)}>{day}</button>)}</div></div>
-          <div className="filter-group"><span className="filter-label">Sumber</span><div className="filter-pills"><button className={activeSource === 'Semua' ? 'filter-pill active' : 'filter-pill'} onClick={() => setActiveSource('Semua')}>Semua <b>{total}</b></button>{sourceCounts.map(({ source, count }) => <button className={activeSource === source ? 'filter-pill active' : 'filter-pill'} key={source} onClick={() => setActiveSource(source)}>{source} <b>{count}</b></button>)}</div></div>
+          <div className="filter-group"><span className="filter-label">Hari</span><div className="filter-pills">{availableDays.map((day) => <a id={`schedule-day-${day.toLowerCase()}`} aria-current={activeDay === day ? 'page' : undefined} className={activeDay === day ? 'filter-pill active' : 'filter-pill'} href={scheduleHref(day, activeSource)} key={day}>{day}</a>)}</div></div>
+          <div className="filter-group"><span className="filter-label">Sumber</span><div className="filter-pills"><a id="schedule-source-semua" aria-current={activeSource === 'Semua' ? 'page' : undefined} className={activeSource === 'Semua' ? 'filter-pill active' : 'filter-pill'} href={scheduleHref(activeDay, 'Semua')}>Semua <b>{total}</b></a>{sourceCounts.map(({ source, count }) => <a id={`schedule-source-${source}`} aria-current={activeSource === source ? 'page' : undefined} className={activeSource === source ? 'filter-pill active' : 'filter-pill'} href={scheduleHref(activeDay, source)} key={source}>{source} <b>{count}</b></a>)}</div></div>
         </section>}
         {error && <div className="status-card error-card">{error}</div>}
         {loading && <div className="status-card">Menyusun kalender dari katalog tersimpan...</div>}
