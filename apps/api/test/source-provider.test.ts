@@ -45,6 +45,18 @@ describe('source data quality', () => {
     expect(normalizeSourceHome(source, payload)).toEqual([]);
   });
 
+  it('does not infer latest episode from numbers in a title', () => {
+    const payloads: Record<SourceId, unknown> = {
+      otakudesu: { data: { ongoing: { animeList: [{ title: 'Blue Lock Season 2', animeId: 'blue-lock', poster: 'https://img/blue-lock.jpg' }] } } },
+      samehadaku: { data: { recent: { animeList: [{ title: 'Blue Lock Season 2', animeId: 'blue-lock', poster: 'https://img/blue-lock.jpg' }] } } },
+      oploverz: { anime_list: [{ title: 'Blue Lock Season 2', slug: 'blue-lock', poster: 'https://img/blue-lock.jpg' }] }
+    };
+
+    for (const source of Object.keys(payloads) as SourceId[]) {
+      expect(normalizeSourceHome(source, payloads[source])).toEqual([]);
+    }
+  });
+
   it('drops episode detail entries with zero or missing episode numbers', () => {
     const detail = normalizeSourceDetail('samehadaku', 'same', {
       data: {

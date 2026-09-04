@@ -142,7 +142,7 @@ export function normalizeSourceHome(source: SourceId, payload: unknown): SourceA
     const detailSlug = source === 'oploverz'
       ? slug.replace(/-episode-(?:\d+|end).*$/i, '')
       : slug;
-    const latestEpisode = numberValue(item.episode ?? item.episodes ?? item.title);
+    const latestEpisode = numberValue(item.episode ?? item.episodes);
     if (latestEpisode === null || latestEpisode <= 0) return [];
     return [{
       source,
