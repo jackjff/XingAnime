@@ -31,6 +31,11 @@ export type CatalogRequestOptions = {
   limit: number;
 };
 
+export function buildAnimeDetailHref(item: { source: string; slug: string; detailSlug: string | null }): string {
+  const detailSlug = item.detailSlug?.trim() || item.slug;
+  return `/anime/${item.source}/${detailSlug}`;
+}
+
 export function buildCatalogApiUrl(apiBaseUrl: string, options: CatalogRequestOptions): string {
   const query = options.query?.trim();
   const path = query ? '/api/v1/catalog/search' : '/api/v1/catalog';

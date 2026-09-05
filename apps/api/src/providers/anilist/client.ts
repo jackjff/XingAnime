@@ -52,6 +52,11 @@ function searchCandidates(title: string): string[] {
   if (/^Degarashi Ouji$/i.test(normalized)) {
     candidates.push('Saikyou Degarashi Ouji no Anyaku Teii Arasoi: Munou wo Enjiru SS Rank Ouji wa Koui Keishousen wo Kage kara Shihai suru');
   }
+  if (/^JoJo['']s Bizarre Adventure\s*\d?\s*:?\s*Steel Ball Run$/i.test(normalized) ||
+      /^JoJo\s?s Bizarre Adventure\s*\d?\s*:?\s*Steel Ball Run$/i.test(normalized) ||
+      /^\d*\s*Steel Ball Run$/i.test(normalized)) {
+    candidates.push('JoJo no Kimyou na Bouken: Steel Ball Run');
+  }
 
   for (let index = 0; index <= words.length - 4; index += 1) {
     candidates.push(words.slice(index, index + 4).join(' '));

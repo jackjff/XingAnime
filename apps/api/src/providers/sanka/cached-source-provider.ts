@@ -9,6 +9,7 @@ import type {
 } from '../source-types.js';
 
 export type SourceCacheTtls = {
+  allAnime: number;
   home: number;
   detail: number;
   episode: number;
@@ -18,6 +19,7 @@ export type SourceCacheTtls = {
 
 export class CachedSourceProvider implements AnimeSourceProvider {
   readonly source: AnimeSourceProvider['source'];
+  readonly getAllAnime?: AnimeSourceProvider['getAllAnime'];
   private readonly inFlight = new Map<string, Promise<unknown>>();
   private readonly ttl: SourceCacheTtls;
 
@@ -28,6 +30,7 @@ export class CachedSourceProvider implements AnimeSourceProvider {
   ) {
     this.source = upstream.source;
     this.ttl = {
+      allAnime: 3_600_000,
       home: 600_000,
       detail: 86_400_000,
       episode: 43_200_000,
@@ -35,6 +38,9 @@ export class CachedSourceProvider implements AnimeSourceProvider {
       schedule: 600_000,
       ...ttlOverrides
     };
+    if (upstream.getAllAnime) {
+      this.getAllAnime = () => this.cached(`sanka:${this.source}:all-anime`, this.ttl.allAnime, () => upstream.getAllAnime!());
+    }
   }
 
   private async cached<T>(key: string, ttl: number, load: () => Promise<T>): Promise<T> {

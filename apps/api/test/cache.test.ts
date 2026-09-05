@@ -19,7 +19,7 @@ describe('CachedSankaClient', () => {
       posterUrl: null,
       latestEpisode: null,
       releaseDay: null,
-      source: 'sanka' as const
+      source: 'otakudesu' as const
     }];
     const upstream = { getHome: vi.fn(async () => items) };
     const client = new CachedSankaClient(upstream, new MemoryCache(), 60_000);

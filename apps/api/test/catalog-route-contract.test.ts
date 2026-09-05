@@ -14,6 +14,24 @@ function provider(source: SourceId): AnimeSourceProvider {
 }
 
 describe('catalog route contracts', () => {
+  it.each([
+    ['letter=1', 'INVALID_LETTER'],
+    ['source=unknown', 'INVALID_SOURCE'],
+    ['q=one&q=two', 'INVALID_QUERY'],
+    ['page=2oops', 'INVALID_QUERY'],
+    ['limit=-1', 'INVALID_QUERY']
+  ])('validates catalog and search consistently: %s', async (parameters, code) => {
+    const listCatalog = vi.fn();
+    const app = buildApp({ catalogRepository: { listCatalog } });
+    for (const path of ['/api/v1/catalog', '/api/v1/catalog/search']) {
+      const response = await app.inject({ method: 'GET', url: `${path}?${parameters}${parameters.startsWith('q=') ? '' : '&q=one'}` });
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.code).toBe(code);
+    }
+    expect(listCatalog).not.toHaveBeenCalled();
+    await app.close();
+  });
+
   it('exposes search and A-Z catalog pages through stable JSON pagination', async () => {
     const listCatalog = vi.fn(async (options: { letter?: string; page?: number; limit?: number }) => ({ items: [{ source: 'otakudesu' as const, slug: 'one', detailSlug: 'one', title: options.letter === 'O' ? 'One Piece' : 'Naruto', posterUrl: null, latestEpisode: 1, releaseDay: null }], page: options.page ?? 1, limit: options.limit ?? 24, total: 1, pageCount: 1, hasNext: false, hasPrevious: false }));
     const app = buildApp({

@@ -20,7 +20,7 @@ export type AnimeSummary = {
   posterUrl: string | null;
   latestEpisode: number | null;
   releaseDay: string | null;
-  source: 'sanka';
+  source: 'otakudesu';
 };
 
 export function normalizeHome(response: SankaHomeResponse): AnimeSummary[] {
@@ -32,6 +32,6 @@ export function normalizeHome(response: SankaHomeResponse): AnimeSummary[] {
       posterUrl: anime.poster ?? null,
       latestEpisode: anime.episodes ?? null,
       releaseDay: anime.releaseDay ?? null,
-      source: 'sanka' as const
+      source: 'otakudesu' as const
     }));
 }

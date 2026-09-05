@@ -1,5 +1,6 @@
 import type { IntervalRateLimiter } from './rate-limiter.js';
 import { isBlockedPosterUrl } from '../poster-enricher.js';
+import { isJsonObject, readSankaJson, SankaCircuitBreaker, SankaUpstreamError } from './response.js';
 import type {
   AnimeSourceProvider,
   PlaybackSource,
@@ -22,6 +23,7 @@ type SourcePaths = {
   episode: string;
   schedule: string;
   server: string | null;
+  unlimited: string | null;
 };
 
 const sourcePaths: Record<SourceId, SourcePaths> = {
@@ -30,21 +32,24 @@ const sourcePaths: Record<SourceId, SourcePaths> = {
     detail: '/anime/anime/',
     episode: '/anime/episode/',
     schedule: '/anime/schedule',
-    server: '/anime/server/'
+    server: '/anime/server/',
+    unlimited: '/anime/unlimited'
   },
   samehadaku: {
     home: '/anime/samehadaku/home',
     detail: '/anime/samehadaku/anime/',
     episode: '/anime/samehadaku/episode/',
     schedule: '/anime/samehadaku/schedule',
-    server: '/anime/samehadaku/server/'
+    server: '/anime/samehadaku/server/',
+    unlimited: '/anime/samehadaku/list'
   },
   oploverz: {
     home: '/anime/oploverz/home',
     detail: '/anime/oploverz/anime/',
     episode: '/anime/oploverz/episode/',
     schedule: '/anime/oploverz/schedule',
-    server: null
+    server: null,
+    unlimited: null
   }
 };
 
@@ -65,8 +70,8 @@ function stringValue(value: unknown): string | null {
 function numberValue(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value !== 'string') return null;
-  const match = value.match(/\d+/);
-  return match ? Number(match[0]) : null;
+  const match = value.match(/\d+(?:[.,]\d+)?/);
+  return match ? Number(match[0].replace(',', '.')) : null;
 }
 
 function synopsisValue(value: unknown): string | null {
@@ -114,7 +119,10 @@ export function classifyPlaybackServerLabel(label: string): { mode: PlaybackMode
 
 function episodeSummary(source: SourceId, item: JsonObject): SourceEpisodeSummary | null {
   const id = stringValue(source === 'oploverz' ? item.slug : item.episodeId);
-  const number = numberValue(source === 'oploverz' ? item.episode : item.eps ?? item.title);
+  const structuredNumber = source === 'oploverz'
+    ? item.episode
+    : item.eps ?? (typeof item.title === 'number' ? item.title : null);
+  const number = numberValue(structuredNumber);
   if (!id || number === null || number <= 0) return null;
   return {
     id,
@@ -144,11 +152,13 @@ export function normalizeSourceHome(source: SourceId, payload: unknown): SourceA
       : slug;
     const latestEpisode = numberValue(item.episode ?? item.episodes);
     if (latestEpisode === null || latestEpisode <= 0) return [];
+    const normalizedTitle = source === 'oploverz' ? title.replace(/\s+Episode\s+.*/i, '').trim() : title;
+    if (/live\s*action/i.test(normalizedTitle)) return [];
     return [{
       source,
       slug,
       detailSlug,
-      title: source === 'oploverz' ? title.replace(/\s+Episode\s+.*/i, '').trim() : title,
+      title: normalizedTitle,
       posterUrl: stringValue(item.poster),
       latestEpisode,
       releaseDay: stringValue(item.releaseDay ?? item.releasedOn)
@@ -257,6 +267,16 @@ function serverPlayback(source: SourceId, data: JsonObject): PlaybackSource[] {
   });
 }
 
+function deduplicatePlayback(items: PlaybackSource[]): PlaybackSource[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = item.serverId ? `server:${item.serverId}` : item.url ? `url:${item.url}` : `${item.label}:${item.quality ?? ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function normalizeSourceEpisode(source: SourceId, id: string, payload: unknown): SourceEpisodeDetail {
   const root = payload as JsonObject;
   const data = source === 'oploverz' ? root : root.data ?? {};
@@ -285,7 +305,7 @@ export function normalizeSourceEpisode(source: SourceId, id: string, payload: un
     releaseTime: stringValue(data.releaseTime ?? data.releasedOn),
     previousEpisodeId: stringValue(data.prevEpisode?.episodeId),
     nextEpisodeId: stringValue(data.nextEpisode?.episodeId),
-    playback
+    playback: deduplicatePlayback(playback)
   };
 }
 
@@ -300,6 +320,7 @@ export type SankaSourceProviderOptions = {
   source: SourceId;
   baseUrl: string;
   limiter: Pick<IntervalRateLimiter, 'acquire'>;
+  circuit?: SankaCircuitBreaker;
   posterResolver?: (title: string) => Promise<string | null>;
   fetcher?: Fetcher;
 };
@@ -308,6 +329,7 @@ export class SankaSourceProvider implements AnimeSourceProvider {
   readonly source: SourceId;
   private readonly baseUrl: string;
   private readonly limiter: Pick<IntervalRateLimiter, 'acquire'>;
+  private readonly circuit: SankaCircuitBreaker;
   private readonly posterResolver?: (title: string) => Promise<string | null>;
   private readonly fetcher: Fetcher;
 
@@ -315,23 +337,108 @@ export class SankaSourceProvider implements AnimeSourceProvider {
     this.source = options.source;
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
     this.limiter = options.limiter;
+    this.circuit = options.circuit ?? new SankaCircuitBreaker();
     this.posterResolver = options.posterResolver;
     this.fetcher = options.fetcher ?? ((url, init) => fetch(url, init));
   }
 
-  private async request(path: string): Promise<unknown> {
+  async getAllAnime(): Promise<Array<{ title: string; slug: string }>> {
+    const unlimitedPath = sourcePaths[this.source].unlimited;
+    // Unsupported providers answer [] without consuming rate budget or provider health.
+    if (!unlimitedPath) return [];
+    if (this.circuit?.isOpen()) throw this.circuit.createOpenError(`${this.source} unlimited`);
     await this.limiter.acquire();
-    const response = await this.fetcher(`${this.baseUrl}${path}`, { headers: { accept: 'application/json' } });
-    if (!response.ok) throw new Error(`Sanka ${this.source} request failed with HTTP ${response.status}`);
-    return response.json();
+    // A different request may have opened the shared circuit while this one queued.
+    if (this.circuit.isOpen()) throw this.circuit.createOpenError(this.source);
+    try {
+      const response = await this.fetcher(`${this.baseUrl}${unlimitedPath}`, { headers: { accept: 'application/json' } });
+      const payload = await readSankaJson(response, `${this.source} unlimited`);
+      const root = payload as JsonObject;
+      const list = root.data?.list;
+      if (!Array.isArray(list) || !list.every((group: unknown) => isJsonObject(group) && Array.isArray(group.animeList))) {
+        throw new SankaUpstreamError(`Sanka ${this.source} unlimited returned an unsupported response shape`, 502);
+      }
+
+      const allAnime: Array<{ title: string; slug: string }> = [];
+      for (const group of list) {
+        if (!group || typeof group !== 'object') continue;
+        const animeList = (group as JsonObject).animeList;
+        if (!Array.isArray(animeList)) continue;
+        for (const item of animeList) {
+          if (!item || typeof item !== 'object') continue;
+          const title = stringValue((item as JsonObject).title);
+          const slug = stringValue((item as JsonObject).animeId);
+          if (title && slug) {
+            allAnime.push({ title, slug });
+          }
+        }
+      }
+      return allAnime;
+    } catch (cause) {
+      const error = cause instanceof SankaUpstreamError
+        ? cause
+        : new SankaUpstreamError(`Sanka ${this.source} unlimited request failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+      if (this.circuit && (error.status === 403 || error.status === 429)) {
+        this.circuit.open(error.status, error.retryAfterMs);
+      }
+      throw error;
+    }
+  }
+
+  private matchesExpectedShape(operation: 'home' | 'detail' | 'episode' | 'schedule' | 'server', payload: unknown): boolean {
+    if (!isJsonObject(payload)) return false;
+    if (operation === 'home') {
+      return this.source === 'otakudesu'
+        ? Array.isArray(payload.data?.ongoing?.animeList)
+        : this.source === 'samehadaku'
+          ? Array.isArray(payload.data?.recent?.animeList)
+          : Array.isArray(payload.anime_list);
+    }
+    if (operation === 'detail') return isJsonObject(this.source === 'oploverz' ? payload.detail : payload.data);
+    if (operation === 'episode') {
+      return this.source === 'oploverz'
+        ? typeof payload.episode_title === 'string' || Array.isArray(payload.streams)
+        : isJsonObject(payload.data);
+    }
+    if (operation === 'schedule') {
+      return this.source === 'oploverz'
+        ? isJsonObject(payload.schedule)
+        : this.source === 'samehadaku'
+          ? Array.isArray(payload.data?.days)
+          : Array.isArray(payload.data);
+    }
+    return typeof (payload.data?.url ?? payload.url) === 'string';
+  }
+
+  private async request(path: string, operation: 'home' | 'detail' | 'episode' | 'schedule' | 'server'): Promise<unknown> {
+    if (this.circuit?.isOpen()) throw this.circuit.createOpenError(`${this.source} ${operation}`);
+    await this.limiter.acquire();
+    // A different request may have opened the shared circuit while this one queued.
+    if (this.circuit.isOpen()) throw this.circuit.createOpenError(this.source);
+    try {
+      const response = await this.fetcher(`${this.baseUrl}${path}`, { headers: { accept: 'application/json' } });
+      const payload = await readSankaJson(response, `${this.source} ${operation}`);
+      if (!this.matchesExpectedShape(operation, payload)) {
+        throw new SankaUpstreamError(`Sanka ${this.source} ${operation} returned an unsupported response shape`, 502);
+      }
+      return payload;
+    } catch (cause) {
+      const error = cause instanceof SankaUpstreamError
+        ? cause
+        : new SankaUpstreamError(`Sanka ${this.source} ${operation} request failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+      if (this.circuit && (error.status === 403 || error.status === 429)) {
+        this.circuit.open(error.status, error.retryAfterMs);
+      }
+      throw error;
+    }
   }
 
   async getHome(): Promise<SourceAnimeSummary[]> {
-    return normalizeSourceHome(this.source, await this.request(sourcePaths[this.source].home));
+    return normalizeSourceHome(this.source, await this.request(sourcePaths[this.source].home, 'home'));
   }
 
   async getDetail(slug: string): Promise<SourceAnimeDetail> {
-    const detail = normalizeSourceDetail(this.source, slug, await this.request(`${sourcePaths[this.source].detail}${encodeURIComponent(slug)}`));
+    const detail = normalizeSourceDetail(this.source, slug, await this.request(`${sourcePaths[this.source].detail}${encodeURIComponent(slug)}`, 'detail'));
     if (this.posterResolver && isBlockedPosterUrl(detail.posterUrl)) {
       const posterUrl = await this.posterResolver(detail.title);
       return posterUrl ? { ...detail, posterUrl } : detail;
@@ -340,16 +447,16 @@ export class SankaSourceProvider implements AnimeSourceProvider {
   }
 
   async getEpisode(id: string): Promise<SourceEpisodeDetail> {
-    return normalizeSourceEpisode(this.source, id, await this.request(`${sourcePaths[this.source].episode}${encodeURIComponent(id)}`));
+    return normalizeSourceEpisode(this.source, id, await this.request(`${sourcePaths[this.source].episode}${encodeURIComponent(id)}`, 'episode'));
   }
 
   async resolveServer(serverId: string): Promise<PlaybackSource> {
     const path = sourcePaths[this.source].server;
     if (!path) throw new Error(`Sanka ${this.source} does not expose a server resolver`);
-    return normalizeSourceServer(this.source, serverId, await this.request(`${path}${encodeURIComponent(serverId)}`));
+    return normalizeSourceServer(this.source, serverId, await this.request(`${path}${encodeURIComponent(serverId)}`, 'server'));
   }
 
   async getSchedule(): Promise<SourceScheduleDay[]> {
-    return normalizeSourceSchedule(this.source, await this.request(sourcePaths[this.source].schedule));
+    return normalizeSourceSchedule(this.source, await this.request(sourcePaths[this.source].schedule, 'schedule'));
   }
 }

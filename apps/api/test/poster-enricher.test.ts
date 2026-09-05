@@ -8,7 +8,7 @@ const item: AnimeSummary = {
   posterUrl: 'https://otakudesu.blog/wp-content/uploads/example.jpg',
   latestEpisode: 1,
   releaseDay: 'Senin',
-  source: 'sanka'
+  source: 'otakudesu'
 };
 
 describe('enrichPosters', () => {

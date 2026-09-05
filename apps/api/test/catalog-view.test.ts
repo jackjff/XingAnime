@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCatalogApiUrl, filterScheduleGroups, getPageWindow } from '../../web/app/lib/catalog-view.js';
+import { buildAnimeDetailHref, buildCatalogApiUrl, filterScheduleGroups, getPageWindow } from '../../web/app/lib/catalog-view.js';
 
 describe('catalog view state', () => {
   it('filters schedule items by source without leaking other providers', () => {
@@ -24,6 +24,13 @@ describe('catalog view state', () => {
       .toBe('http://localhost:4000/api/v1/catalog/search?q=one+piece&letter=O&source=oploverz&page=1&limit=24');
     expect(buildCatalogApiUrl('http://localhost:4000', { page: 2, limit: 24 }))
       .toBe('http://localhost:4000/api/v1/catalog?page=2&limit=24');
+  });
+
+  it('routes catalog cards through the stable detail slug', () => {
+    expect(buildAnimeDetailHref({ source: 'oploverz', slug: 'one-piece-episode-1015-5', detailSlug: 'one-piece' }))
+      .toBe('/anime/oploverz/one-piece');
+    expect(buildAnimeDetailHref({ source: 'otakudesu', slug: 'fallback', detailSlug: null }))
+      .toBe('/anime/otakudesu/fallback');
   });
 
   it('clamps episode pages and returns the requested visible window', () => {

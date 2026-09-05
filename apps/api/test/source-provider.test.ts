@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyPlaybackUrl, normalizeSourceDetail, normalizeSourceEpisode, normalizeSourceHome } from '../src/providers/sanka/source-provider.js';
+import { classifyPlaybackUrl, normalizeSourceDetail, normalizeSourceEpisode, normalizeSourceHome, SankaSourceProvider } from '../src/providers/sanka/source-provider.js';
 import type { SourceId } from '../src/providers/source-types.js';
 
 const fixtures: Record<SourceId, { home: unknown; detail: unknown; episode: unknown }> = {
@@ -31,6 +31,26 @@ describe.each(Object.keys(fixtures) as SourceId[])('source normalizers: %s', (so
     expect(detail).toMatchObject({ source, slug: 'detail-slug', episodes: [{ id: expect.any(String) }] });
     expect(episode).toMatchObject({ source, id: 'episode-slug' });
     expect(episode.playback.some((item) => item.url)).toBe(true);
+  });
+});
+
+describe('Sanka source provider boundary', () => {
+  it('uses the documented Samehadaku path and rejects API error envelopes', async () => {
+    const calls: string[] = [];
+    const provider = new SankaSourceProvider({
+      source: 'samehadaku',
+      baseUrl: 'https://provider.test/',
+      limiter: { acquire: async () => undefined },
+      fetcher: async (url) => {
+        calls.push(url);
+        return new Response(JSON.stringify({
+          status: 'success', statusCode: 404, message: 'data tidak ditemukan', ok: false, data: null
+        }), { status: 200 });
+      }
+    });
+
+    await expect(provider.getHome()).rejects.toMatchObject({ status: 404 });
+    expect(calls).toEqual(['https://provider.test/anime/samehadaku/home']);
   });
 });
 
@@ -70,6 +90,51 @@ describe('source data quality', () => {
     });
 
     expect(detail.episodes).toEqual([{ id: 'same-1', title: 'Episode 1', number: 1, releaseDate: null }]);
+  });
+
+  it('does not infer episode number from a free-form episode title', () => {
+    const detail = normalizeSourceDetail('samehadaku', 'same', {
+      data: {
+        title: 'Same',
+        episodeList: [{ title: 'Blue Lock Season 2', episodeId: 'same-season-2' }]
+      }
+    });
+
+    expect(detail.episodes).toEqual([]);
+  });
+
+  it('preserves decimal Oploverz episode numbers instead of collapsing specials', () => {
+    const detail = normalizeSourceDetail('oploverz', 'one-piece', {
+      detail: {
+        title: 'One Piece',
+        episode_list: [
+          { slug: 'one-piece-episode-1015', title: 'One Piece Episode 1015', episode: '1015' },
+          { slug: 'one-piece-episode-1015-5', title: 'One Piece Episode 1015.5', episode: '1015.5' }
+        ]
+      }
+    });
+
+    expect(detail.episodes.map((episode) => episode.number)).toEqual([1015, 1015.5]);
+  });
+
+  it('does not publish an Oploverz tamat card without a positive episode number', () => {
+    const items = normalizeSourceHome('oploverz', {
+      anime_list: [{
+        title: 'Ore Monogatari Episode Tamat',
+        slug: 'ore-monogatari-episode-tamat',
+        episode: 'Tamat'
+      }]
+    });
+
+    expect(items).toEqual([]);
+  });
+
+  it('does not publish live-action releases in the anime catalog', () => {
+    const items = normalizeSourceHome('oploverz', {
+      anime_list: [{ title: 'One Piece Live Action S2', slug: 'one-piece-live-action-s2-episode-1', episode: 'Ep 1' }]
+    });
+
+    expect(items).toEqual([]);
   });
 });
 
@@ -121,5 +186,17 @@ describe('playback embedding policy', () => {
       { label: 'filedon', mode: 'unavailable', reason: 'provider_ads', url: null },
       { label: 'vidhide', mode: 'unknown', reason: 'not_verified', url: null }
     ]);
+  });
+
+  it('deduplicates playback entries by server identity or URL', () => {
+    const episode = normalizeSourceEpisode('oploverz', 'one-piece-1015', {
+      episode_title: 'One Piece Episode 1015',
+      streams: [
+        { name: 'Primary', url: 'https://embed.example/one-piece-1015' },
+        { name: 'Mirror label', url: 'https://embed.example/one-piece-1015' }
+      ]
+    });
+
+    expect(episode.playback).toHaveLength(1);
   });
 });

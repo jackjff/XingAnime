@@ -43,4 +43,17 @@ describe('AniListPosterClient', () => {
     await expect(client.resolve('Tensei shitara Slime Datta Ken Season 4')).resolves.toBe('https://s4.anilist.co/slime.jpg');
     expect(searches).toContain('That Time I Got Reincarnated as a Slime');
   });
+
+  it('uses the canonical AniList alias for provider-numbered Steel Ball Run', async () => {
+    const searches: string[] = [];
+    const client = new AniListPosterClient(async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as { variables: { search: string } };
+      searches.push(body.variables.search);
+      const found = body.variables.search === 'JoJo no Kimyou na Bouken: Steel Ball Run';
+      return new Response(JSON.stringify({ data: found ? { Media: { coverImage: { large: 'https://s4.anilist.co/steel-ball-run.jpg' } } } : { Media: null } }), { status: 200 });
+    }, 0);
+
+    await expect(client.resolve('JoJo’s Bizarre Adventure 6 : Steel Ball Run')).resolves.toBe('https://s4.anilist.co/steel-ball-run.jpg');
+    expect(searches).toContain('JoJo no Kimyou na Bouken: Steel Ball Run');
+  });
 });

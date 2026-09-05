@@ -18,9 +18,8 @@ describe('PostgresCatalogRepository.findEpisode', () => {
 
     expect(result).toMatchObject({
       id: 'episode-2',
-      posterUrl: 'https://s4.anilist.co/file/poster.jpg',
       previousEpisodeId: 'episode-1',
-      nextEpisodeId: 'episode-3'
+      nextEpisodeId: 'episode-3',
     });
     expect(database.query).toHaveBeenCalledWith(expect.stringContaining('LAG'), ['otakudesu', 'episode-2']);
   });

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.js';
 import type { AnimeSourceProvider, SourceId } from '../src/providers/source-types.js';
+import { SankaUpstreamError } from '../src/providers/sanka/response.js';
 
 function provider(source: SourceId): AnimeSourceProvider {
   return {
@@ -61,7 +62,7 @@ describe('source routes', () => {
     const getEpisode = vi.spyOn(selected, 'getEpisode');
     const getSchedule = vi.spyOn(selected, 'getSchedule');
     const repository = {
-      findDetail: vi.fn(async () => ({ source: 'otakudesu' as const, slug: 'stored', title: 'Stored anime', posterUrl: null, synopsis: 'cached', status: 'Ongoing', type: null, studio: null, genres: [], episodes: [] })),
+      findDetail: vi.fn(async () => ({ source: 'otakudesu' as const, slug: 'stored', title: 'Stored anime', posterUrl: null, synopsis: 'cached', status: 'Ongoing', type: null, studio: null, genres: [], episodes: [{ id: 'ep-1', title: 'Episode 1', number: 1, releaseDate: null }], firstEpisodeId: 'ep-1', latestEpisodeId: 'ep-1', availableSources: [] })),
       upsertDetail: vi.fn(async () => undefined),
       findEpisode: vi.fn(async () => ({ source: 'otakudesu' as const, id: 'ep-1', title: 'Episode 1', animeSlug: 'stored', releaseTime: null, previousEpisodeId: null, nextEpisodeId: null, playback: [] })),
       upsertEpisode: vi.fn(async () => undefined),
@@ -85,11 +86,12 @@ describe('source routes', () => {
     await app.close();
   });
 
-  it('repairs a missing persisted detail poster from the poster resolver', async () => {
+  it('does not block persisted detail on request-time poster enrichment', async () => {
+    const posterResolver = vi.fn(async () => 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/repaired.jpg');
     const app = buildApp({
       homeClient: { getHome: async () => [] },
       sourceProviders: { otakudesu: provider('otakudesu') },
-      posterResolver: vi.fn(async () => 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/repaired.jpg'),
+      posterResolver,
       catalogRepository: {
         findDetail: vi.fn(async () => ({ source: 'otakudesu' as const, slug: 'stored', title: 'Stored anime', posterUrl: null, synopsis: null, status: null, type: null, studio: null, genres: [], episodes: [] }))
       }
@@ -98,7 +100,108 @@ describe('source routes', () => {
     const response = await app.inject({ method: 'GET', url: '/api/v1/sources/otakudesu/anime/stored' });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().data.posterUrl).toContain('s4.anilist.co');
+    expect(response.json().data.posterUrl).toBeNull();
+    expect(posterResolver).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('does not claim an episode was persisted without a structured episode number', async () => {
+    const selected = provider('otakudesu');
+    selected.getEpisode = vi.fn(async (id: string) => ({ source: 'otakudesu' as const, id, title: 'Episode', animeSlug: 'stored', posterUrl: null, releaseTime: null, previousEpisodeId: null, nextEpisodeId: null, playback: [] }));
+    const upsertEpisode = vi.fn(async () => undefined);
+    const app = buildApp({
+      homeClient: { getHome: async () => [] },
+      sourceProviders: { otakudesu: selected },
+      catalogRepository: { findEpisode: vi.fn(async () => null), upsertEpisode }
+    });
+
+    const response = await app.inject({ method: 'GET', url: '/api/v1/sources/otakudesu/episode/episode-1' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().meta.persisted).toBe(false);
+    expect(upsertEpisode).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('hydrates a seeded discovered anime on demand when its stored episodes are missing', async () => {
+    const selected = provider('otakudesu');
+    selected.getDetail = vi.fn(async (slug: string) => ({ source: 'otakudesu' as const, slug, title: 'Hydrated anime', posterUrl: null, synopsis: 'fresh', status: 'Ongoing', type: null, studio: null, genres: [], episodes: [{ id: 'ep-1', title: 'Episode 1', number: 1, releaseDate: null }] }));
+    const upsertDetail = vi.fn(async () => undefined);
+    const app = buildApp({
+      homeClient: { getHome: async () => [] },
+      sourceProviders: { otakudesu: selected },
+      catalogRepository: {
+        findDetail: vi.fn(async () => ({ source: 'otakudesu' as const, slug: 'stored', title: 'Stored anime', posterUrl: null, synopsis: null, status: null, type: null, studio: null, genres: [], episodes: [], firstEpisodeId: null, latestEpisodeId: null, availableSources: [] })),
+        upsertDetail
+      }
+    });
+
+    const response = await app.inject({ method: 'GET', url: '/api/v1/sources/otakudesu/anime/stored' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.title).toBe('Hydrated anime');
+    expect(response.json().meta.storage).toBe('provider-fallback');
+    expect(upsertDetail).toHaveBeenCalledWith('otakudesu', expect.objectContaining({ slug: 'stored' }));
+    await app.close();
+  });
+
+  it('serves a stored detail without a provider call once episodes exist', async () => {
+    const selected = provider('otakudesu');
+    const getDetail = vi.spyOn(selected, 'getDetail');
+    const app = buildApp({
+      homeClient: { getHome: async () => [] },
+      sourceProviders: { otakudesu: selected },
+      catalogRepository: {
+        findDetail: vi.fn(async () => ({ source: 'otakudesu' as const, slug: 'stored', title: 'Stored anime', posterUrl: null, synopsis: 'cached', status: 'Ongoing', type: null, studio: null, genres: [], episodes: [{ id: 'ep-1', title: 'Episode 1', number: 1, releaseDate: null }], firstEpisodeId: 'ep-1', latestEpisodeId: 'ep-1', availableSources: [] }))
+      }
+    });
+
+    const response = await app.inject({ method: 'GET', url: '/api/v1/sources/otakudesu/anime/stored' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.title).toBe('Stored anime');
+    expect(response.json().meta.storage).toBe('postgres');
+    expect(getDetail).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('keeps serving stale stored metadata when on-demand hydration fails', async () => {
+    const selected = provider('otakudesu');
+    selected.getDetail = vi.fn(async () => { throw new Error('Sanka 429'); });
+    const app = buildApp({
+      homeClient: { getHome: async () => [] },
+      sourceProviders: { otakudesu: selected },
+      catalogRepository: {
+        findDetail: vi.fn(async () => ({ source: 'otakudesu' as const, slug: 'stored', title: 'Stored anime', posterUrl: null, synopsis: null, status: null, type: null, studio: null, genres: [], episodes: [], firstEpisodeId: null, latestEpisodeId: null, availableSources: [] }))
+      }
+    });
+
+    const response = await app.inject({ method: 'GET', url: '/api/v1/sources/otakudesu/anime/stored' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.title).toBe('Stored anime');
+    expect(response.json().meta.storage).toBe('postgres');
+    await app.close();
+  });
+
+  it('returns not found and disables an unhydrated source after a definitive dead link', async () => {
+    const selected = provider('otakudesu');
+    selected.getDetail = vi.fn(async () => { throw new SankaUpstreamError('data tidak ditemukan', 500); });
+    const markSourceUnavailable = vi.fn(async () => undefined);
+    const app = buildApp({
+      homeClient: { getHome: async () => [] },
+      sourceProviders: { otakudesu: selected },
+      catalogRepository: {
+        findDetail: vi.fn(async () => ({ source: 'otakudesu' as const, slug: 'stored', title: 'Stored anime', posterUrl: null, synopsis: null, status: null, type: null, studio: null, genres: [], episodes: [], firstEpisodeId: null, latestEpisodeId: null, availableSources: [] })),
+        markSourceUnavailable
+      }
+    });
+
+    const response = await app.inject({ method: 'GET', url: '/api/v1/sources/otakudesu/anime/stored' });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error.code).toBe('SOURCE_NOT_FOUND');
+    expect(markSourceUnavailable).toHaveBeenCalledWith('otakudesu', 'stored', 'data tidak ditemukan');
     await app.close();
   });
 });

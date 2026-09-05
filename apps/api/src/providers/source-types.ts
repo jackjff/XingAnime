@@ -50,7 +50,7 @@ export type PlaybackMode = 'embed' | 'external' | 'unavailable' | 'unknown';
 export type PlaybackReason = 'provider_frame_policy' | 'provider_unavailable' | 'provider_ads' | 'not_verified' | null;
 
 export type PlaybackSource = {
-  label: string;
+  label: string | null;
   quality: string | null;
   kind: 'embed' | 'server';
   mode: PlaybackMode;
@@ -64,21 +64,10 @@ export type SourceEpisodeDetail = {
   id: string;
   title: string;
   animeSlug: string | null;
-  posterUrl?: string | null;
   releaseTime: string | null;
   previousEpisodeId: string | null;
   nextEpisodeId: string | null;
   playback: PlaybackSource[];
-};
-
-export type PageResult<T> = {
-  items: T[];
-  page: number;
-  limit: number;
-  total: number;
-  pageCount: number;
-  hasNext: boolean;
-  hasPrevious: boolean;
 };
 
 export type CatalogQuery = {
@@ -95,9 +84,20 @@ export type EpisodeQuery = {
   limit?: number;
 };
 
+export type PageResult<T> = {
+  items: T[];
+  page: number;
+  limit: number;
+  total: number;
+  pageCount: number;
+  hasNext: boolean;
+  hasPrevious: boolean;
+};
+
 export type AnimeSourceProvider = {
   source: SourceId;
   getHome(): Promise<SourceAnimeSummary[]>;
+  getAllAnime?(): Promise<Array<{ title: string; slug: string }>>;
   getDetail(slug: string): Promise<SourceAnimeDetail>;
   getEpisode(id: string): Promise<SourceEpisodeDetail>;
   resolveServer(serverId: string): Promise<PlaybackSource>;
