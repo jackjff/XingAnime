@@ -10,7 +10,7 @@ type Playback = { label: string; quality: string | null; kind: 'embed' | 'server
 type Episode = { source: string; id: string; title: string; animeSlug: string | null; posterUrl?: string | null; releaseTime: string | null; previousEpisodeId: string | null; nextEpisodeId: string | null; playback: Playback[]; availableSources?: Array<{ source: string; slug: string }>; episodeSources?: Array<{ source: string; id: string; slug: string }> };
 type EpisodeSource = { source: string; id: string; slug: string };
 
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
 
 function mergeEpisodeSources(...groups: EpisodeSource[][]): EpisodeSource[] {
   const sources = new Map<string, EpisodeSource>();

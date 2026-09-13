@@ -7,7 +7,7 @@ import { SiteHeader } from './site-header';
 import { buildAnimeDetailHref } from '../lib/catalog-view';
 import { fetchCatalogPage, type CatalogItem, type CatalogMeta } from '../lib/catalog-request';
 
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
 const letters = ['Semua', ...Array.from({ length: 26 }, (_, index) => String.fromCharCode(65 + index))];
 
 const pageLimit = 24;

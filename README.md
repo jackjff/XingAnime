@@ -19,9 +19,9 @@ Xing Anime adalah platform katalog dan streaming anime berbahasa Indonesia denga
 
 1. Salin `.env.example` menjadi `.env`.
 2. Ganti seluruh password/secret development sebelum deployment.
-3. Jalankan infrastructure saja dengan `docker compose up -d`.
-4. Jalankan seluruh MVP dengan `docker compose --profile app up -d --build`.
-5. Buka web di `http://localhost:3000`, API di `http://localhost:4000`, dan Directus di `http://localhost:8055`.
+3. Jalankan seluruh stack dengan `docker compose up -d --build`.
+4. Buka web di `http://localhost:3000`, API di `http://localhost:4000`, dan Directus di `http://localhost:8055`.
+5. Web mem-proxy `/api/*` ke service API internal. Jangan set `NEXT_PUBLIC_API_BASE_URL=http://localhost:4000` pada server publik, karena `localhost` akan merujuk ke browser pengguna.
 
 ## Provider policy
 

@@ -24,7 +24,7 @@ type DiscoveryResult = {
   pageCount: number | null;
 };
 
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
 const sources = ['otakudesu', 'samehadaku', 'oploverz'];
 const kinds = ['ongoing', 'completed', 'search'] as const;
 

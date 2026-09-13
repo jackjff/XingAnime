@@ -11,7 +11,7 @@ type EpisodePageMeta = { page: number; limit: number; total: number; pageCount: 
 type EpisodePageResponse = { success: boolean; data: Episode[] | null; meta: EpisodePageMeta; error: { message?: string } | null };
 type SourceChoice = { source: string; slug: string };
 
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
 const providers = [
   { id: 'otakudesu', label: 'Otakudesu' },
   { id: 'samehadaku', label: 'Samehadaku' },

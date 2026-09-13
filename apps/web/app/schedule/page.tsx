@@ -9,7 +9,7 @@ import { filterScheduleGroups } from '../lib/catalog-view';
 type ScheduleItem = { source: string; slug: string; title: string; posterUrl: string | null; episodeLabel: string | null };
 type ScheduleDay = { day: string; items: ScheduleItem[] };
 
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
 const dayOrder = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
 
 function scheduleHref(day: string, source: string) {
