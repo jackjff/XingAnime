@@ -80,4 +80,24 @@ describe('BackgroundScheduler', () => {
     expect(release).toHaveBeenCalledWith('token');
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it('renews an owned distributed lease until the job settles', async () => {
+    vi.useFakeTimers();
+    const work = deferred();
+    const renew = vi.fn(async () => true);
+    const release = vi.fn(async () => {});
+    const scheduler = new BackgroundScheduler([{
+      name: 'metadata',
+      intervals: [],
+      lease: { acquire: async () => 'token', renew, release, renewalIntervalMilliseconds: 100 },
+      run: async () => { await work.promise; }
+    }], vi.fn());
+
+    scheduler.start();
+    await vi.advanceTimersByTimeAsync(250);
+    expect(renew).toHaveBeenCalledTimes(2);
+    work.resolve();
+    await scheduler.stop();
+    expect(release).toHaveBeenCalledWith('token');
+  });
 });

@@ -50,6 +50,27 @@ describe('catalog route contracts', () => {
     await app.close();
   });
 
+  it('falls back to live provider search only after PostgreSQL has no matches and persists the result', async () => {
+    const upsertSourceHome = vi.fn(async () => undefined);
+    const discover = vi.fn(async () => ({
+      items: [{ source: 'otakudesu' as const, slug: 'new-title', detailSlug: 'new-title', title: 'New Title', posterUrl: null, latestEpisode: 1, releaseDay: null }],
+      page: 1, hasNext: false, hasPrevious: false, pageCount: 1
+    }));
+    const app = buildApp({
+      catalogRepository: { listCatalog: async () => ({ items: [], page: 1, limit: 24, total: 0, pageCount: 0, hasNext: false, hasPrevious: false }), upsertSourceHome },
+      sourceProviders: { otakudesu: { ...provider('otakudesu'), discover } }
+    });
+
+    const response = await app.inject({ method: 'GET', url: '/api/v1/catalog/search?q=new' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data[0].title).toBe('New Title');
+    expect(response.json().meta.storage).toBe('provider-fallback');
+    expect(discover).toHaveBeenCalledWith({ kind: 'search', query: 'new', page: 1 });
+    expect(upsertSourceHome).toHaveBeenCalledWith('otakudesu', expect.any(Array));
+    await app.close();
+  });
+
   it('exposes server-side episode pagination and rejects invalid letters', async () => {
     const app = buildApp({
       homeClient: { getHome: async () => [] },
@@ -65,6 +86,18 @@ describe('catalog route contracts', () => {
     expect(episodes.json().meta.storage).toBe('postgres');
     expect(invalid.statusCode).toBe(400);
     expect(invalid.json().error.code).toBe('INVALID_LETTER');
+    await app.close();
+  });
+
+  it.each(['q=one&q=two', `q=${'x'.repeat(201)}`, 'page=1&page=2', 'limit=1&limit=2'])('rejects repeated and unbounded episode queries: %s', async (parameters) => {
+    const listEpisodes = vi.fn();
+    const app = buildApp({ catalogRepository: { listEpisodes } });
+
+    const response = await app.inject({ method: 'GET', url: `/api/v1/sources/otakudesu/anime/one-piece/episodes?${parameters}` });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe('INVALID_QUERY');
+    expect(listEpisodes).not.toHaveBeenCalled();
     await app.close();
   });
 

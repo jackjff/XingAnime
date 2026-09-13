@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CatalogSyncWorker } from '../src/catalog/sync-worker.js';
+import { PosterRateLimitError } from '../src/providers/anilist/client.js';
 import { PostgresCatalogRepository, type Queryable } from '../src/catalog/postgres-repository.js';
 
 function sourceItem() {
@@ -17,30 +18,37 @@ function sourceItem() {
 describe('PostgresCatalogRepository', () => {
   it('upserts anime and provider identity without collapsing source IDs', async () => {
     const query = vi.fn()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: 'anime-1' }] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
     const repository = new PostgresCatalogRepository({ query });
 
     await repository.upsertSourceHome('samehadaku', [sourceItem()]);
 
-    expect(query).toHaveBeenCalledTimes(2);
-    expect(query.mock.calls[0][0]).toContain('WHEN $3::text IS NOT NULL');
-    expect(query.mock.calls[0][0]).toContain('EXCLUDED.poster_url IS NOT NULL');
-    expect(query.mock.calls[0][0]).toContain('EXCLUDED.poster_url ~');
-    expect(query.mock.calls[0][0]).toContain('anilist');
-    expect(query.mock.calls[0][0]).toContain('$3::text');
-    expect(query.mock.calls[0][0]).toContain('poster_status');
-    expect(query.mock.calls[0][0]).toContain("'resolved'");
-    expect(query.mock.calls[0][1]).toEqual(['liar-game', 'Liar Game', 'https://img.example/liar.jpg', 'Sabtu']);
-    expect(query.mock.calls[1][1]).toEqual(['anime-1', 'samehadaku', 'liar-game', 'liar-game']);
-    expect(query.mock.calls[1][0]).toContain('WITH updated_source AS');
-    expect(query.mock.calls[1][0]).toContain('anime_id = $1 AND provider_name = $2');
-    expect(query.mock.calls[1][0]).toContain("'discovered'");
-    expect(query.mock.calls[1][0]).toContain("source_status = 'verified' THEN 'verified'");
+    expect(query).toHaveBeenCalledTimes(4);
+    expect(query.mock.calls[0][0]).toContain('provider_name = $1 AND provider_anime_id = $2');
+    expect(query.mock.calls[1][0]).toContain('is_explicit = TRUE');
+    expect(query.mock.calls[2][0]).toContain('WHEN $3::text IS NOT NULL');
+    expect(query.mock.calls[2][0]).toContain('EXCLUDED.poster_url IS NOT NULL');
+    expect(query.mock.calls[2][0]).toContain('EXCLUDED.poster_url ~');
+    expect(query.mock.calls[2][0]).toContain('anilist');
+    expect(query.mock.calls[2][0]).toContain('$3::text');
+    expect(query.mock.calls[2][0]).toContain('poster_status');
+    expect(query.mock.calls[2][0]).toContain("'resolved'");
+    expect(query.mock.calls[2][1]).toEqual(['liar-game-samehadaku-liar-game', 'Liar Game', 'https://img.example/liar.jpg', 'Sabtu']);
+    expect(query.mock.calls[3][1]).toEqual(['anime-1', 'samehadaku', 'liar-game', 'liar-game']);
+    expect(query.mock.calls[3][0]).toContain('WITH updated_source AS');
+    expect(query.mock.calls[3][0]).toContain('anime_id = $1 AND provider_name = $2');
+    expect(query.mock.calls[3][0]).toContain("'discovered'");
+    expect(query.mock.calls[3][0]).toContain("source_status = 'verified' THEN 'verified'");
   });
 
   it('promotes a source only after persisting a structured valid episode number', async () => {
     const query = vi.fn()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: 'anime-1' }] })
       .mockResolvedValue({ rows: [] });
     const repository = new PostgresCatalogRepository({ query } as unknown as Queryable);
@@ -69,7 +77,10 @@ describe('PostgresCatalogRepository', () => {
 
   it('uses the stable detail slug as Oploverz provider identity', async () => {
     const query = vi.fn()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: 'anime-1' }] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
     const repository = new PostgresCatalogRepository({ query });
 
@@ -81,7 +92,7 @@ describe('PostgresCatalogRepository', () => {
       title: 'One Piece'
     }]);
 
-    expect(query.mock.calls[1][1]).toEqual(['anime-1', 'oploverz', 'one-piece', 'one-piece']);
+    expect(query.mock.calls[3][1]).toEqual(['anime-1', 'oploverz', 'one-piece', 'one-piece']);
   });
 
   it('clears every poster outside the trusted AniList CDN allowlist', async () => {
@@ -239,6 +250,19 @@ describe('CatalogSyncWorker', () => {
     expect(repository.listMissingPosters).toHaveBeenCalledWith(10);
     expect(repository.updatePoster).toHaveBeenCalledWith('anime-1', 'https://s4.anilist.co/file/one-piece.jpg');
     expect(repository.markPosterUnresolved).toHaveBeenCalledWith('anime-2');
+  });
+
+  it('leaves a poster pending when AniList is rate limited so a later cycle can retry it', async () => {
+    const repository = {
+      upsertSourceHome: vi.fn(async () => undefined),
+      listMissingPosters: vi.fn(async () => [{ id: 'anime-1', title: 'Banana Fish' }]),
+      updatePoster: vi.fn(async () => undefined),
+      markPosterUnresolved: vi.fn(async () => undefined)
+    };
+    const worker = new CatalogSyncWorker([], repository, async () => { throw new PosterRateLimitError(); });
+
+    await expect(worker.backfillPosters(10)).resolves.toEqual({ attempted: 1, updated: 0, unresolved: 0 });
+    expect(repository.markPosterUnresolved).not.toHaveBeenCalled();
   });
 
   it('hydrates discovered sources through detail endpoints before promotion', async () => {

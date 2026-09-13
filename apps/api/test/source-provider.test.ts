@@ -35,6 +35,20 @@ describe.each(Object.keys(fixtures) as SourceId[])('source normalizers: %s', (so
 });
 
 describe('Sanka source provider boundary', () => {
+  it('aborts a hung upstream request after the configured timeout', async () => {
+    const provider = new SankaSourceProvider({
+      source: 'otakudesu',
+      baseUrl: 'https://provider.test/',
+      limiter: { acquire: async () => undefined },
+      requestTimeoutMilliseconds: 1,
+      fetcher: async (_url, init) => new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+      })
+    });
+
+    await expect(provider.getHome()).rejects.toThrow(/timed out/i);
+  });
+
   it('uses the documented Samehadaku path and rejects API error envelopes', async () => {
     const calls: string[] = [];
     const provider = new SankaSourceProvider({
@@ -51,6 +65,36 @@ describe('Sanka source provider boundary', () => {
 
     await expect(provider.getHome()).rejects.toMatchObject({ status: 404 });
     expect(calls).toEqual(['https://provider.test/anime/samehadaku/home']);
+  });
+
+  it('uses the documented Otakudesu ongoing endpoint with upstream pagination', async () => {
+    const calls: string[] = [];
+    const provider = new SankaSourceProvider({
+      source: 'otakudesu',
+      baseUrl: 'https://provider.test/',
+      limiter: { acquire: async () => undefined },
+      fetcher: async (url) => {
+        calls.push(url);
+        return new Response(JSON.stringify({
+          data: { animeList: [{ title: 'Ongoing', animeId: 'ongoing', poster: null, episodes: '12', releaseDay: 'Senin' }] },
+          pagination: { currentPage: 2, hasPrevPage: true, hasNextPage: true, totalPages: 5 }
+        }));
+      }
+    });
+
+    const discoveryProvider = provider as unknown as {
+      discover(query: { kind: 'ongoing'; page: number }): Promise<{
+        items: Array<{ title: string }>;
+        page: number;
+        hasNext: boolean;
+        hasPrevious: boolean;
+        pageCount: number | null;
+      }>;
+    };
+    const result = await discoveryProvider.discover({ kind: 'ongoing', page: 2 });
+
+    expect(calls).toEqual(['https://provider.test/anime/ongoing-anime?page=2']);
+    expect(result).toMatchObject({ items: [{ title: 'Ongoing' }], page: 2, hasNext: true, hasPrevious: true, pageCount: 5 });
   });
 });
 
@@ -161,6 +205,10 @@ describe('playback embedding policy', () => {
     expect(classifyPlaybackUrl('https://filedon.example/watch/with-popups')).toEqual({
       mode: 'unavailable',
       reason: 'provider_ads'
+    });
+    expect(classifyPlaybackUrl('https://wibuu.info/stream/embed.php?url=https%3A%2F%2Fexample.invalid')).toEqual({
+      mode: 'unavailable',
+      reason: 'provider_unavailable'
     });
   });
 

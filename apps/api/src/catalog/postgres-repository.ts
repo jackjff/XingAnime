@@ -35,6 +35,7 @@ type DetailRow = {
 type AlternativeRow = { provider_name: SourceId; provider_slug: string | null; provider_anime_id: string };
 
 type EpisodeRow = {
+  anime_id?: string;
   provider_episode_id: string;
   episode_title: string | null;
   episode_number: string;
@@ -70,6 +71,7 @@ type EpisodePageRow = {
   episode_title: string | null;
   episode_number: string;
   release_date: string | null;
+  episode_sources: Array<{ source: SourceId; id: string; slug: string }>;
 };
 
 function pageResult<T>(items: T[], requestedPage: number, limit: number, total: number): PageResult<T> {
@@ -87,7 +89,12 @@ function pageResult<T>(items: T[], requestedPage: number, limit: number, total: 
 }
 
 export function canonicalSlug(title: string): string {
-  return title.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 160) || 'untitled';
+  const normalized = title.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return normalized.replace(/-?on-?going$/, '').replace(/-$/, '').slice(0, 160) || 'untitled';
+}
+
+function sourceCanonicalSlug(source: SourceId, slug: string, title: string): string {
+  return `${canonicalSlug(title).slice(0, 110)}-${canonicalSlug(`${source}-${slug}`).slice(0, 49)}`.slice(0, 160);
 }
 
 export class PostgresCatalogRepository {
@@ -232,7 +239,20 @@ export class PostgresCatalogRepository {
 
   async upsertSourceHome(source: SourceId, items: SourceAnimeSummary[]): Promise<void> {
     for (const item of items) {
-      const anime = await this.database.query<{ id: string }>(
+      const identityKey = canonicalSlug(item.title);
+      const providerIdentity = item.detailSlug ?? item.slug;
+      const knownSource = await this.database.query<{ anime_id: string }>(
+        `SELECT anime_id FROM anime_sources WHERE provider_name = $1 AND provider_anime_id = $2 LIMIT 1`,
+        [source, providerIdentity]
+      );
+      const explicitIdentity = await this.database.query<{ anime_id: string }>(
+        `SELECT anime_id FROM anime_identity_aliases WHERE identity_key = $1 AND is_explicit = TRUE`,
+        [identityKey]
+      );
+      const existingAnimeId = knownSource.rows[0]?.anime_id ?? explicitIdentity.rows[0]?.anime_id;
+      const anime = existingAnimeId
+        ? { rows: [{ id: existingAnimeId }] }
+        : await this.database.query<{ id: string }>(
         `INSERT INTO anime (canonical_slug, title, poster_url, poster_status, poster_checked_at, release_day, visibility, published_at)
          VALUES ($1, $2, CASE
            WHEN $3::text IS NOT NULL
@@ -274,7 +294,7 @@ export class PostgresCatalogRepository {
            release_day = COALESCE(EXCLUDED.release_day, anime.release_day),
            updated_at = NOW()
          RETURNING id`,
-        [canonicalSlug(item.title), item.title, item.posterUrl, item.releaseDay]
+        [sourceCanonicalSlug(source, providerIdentity, item.title), item.title, item.posterUrl, item.releaseDay]
       );
       const animeId = anime.rows[0]?.id;
       if (!animeId) throw new Error(`Failed to upsert anime ${item.title}`);
@@ -303,7 +323,7 @@ export class PostgresCatalogRepository {
            last_success_at = NOW(),
            last_error = NULL,
            updated_at = NOW()`,
-        [animeId, source, item.detailSlug, item.detailSlug]
+        [animeId, source, providerIdentity, providerIdentity]
       );
     }
   }
@@ -373,7 +393,6 @@ export class PostgresCatalogRepository {
            AND ($3::text IS NULL OR src.provider_name = $3)
          GROUP BY a.id, src.id, src.provider_name, src.provider_slug, src.provider_anime_id,
                   a.title, a.featured, a.poster_url, a.release_day, src.updated_at
-         HAVING COUNT(e.id) > 0
        ), catalog AS (
          SELECT * FROM ranked_catalog WHERE source_rank = 1
        ), totals AS (
@@ -407,11 +426,24 @@ export class PostgresCatalogRepository {
   async listEpisodes(source: SourceId, slug: string, options: EpisodeQuery = {}): Promise<PageResult<SourceEpisodeSummary>> {
     const page = Math.max(1, options.page ?? 1);
     const limit = Math.min(100, Math.max(1, options.limit ?? 50));
-    const query = options.query?.trim() || null;
+    const query = options.query?.trim().replace(/[\\%_]/g, '\\$&') || null;
     const result = await this.database.query<EpisodePageRow>(
-      `SELECT COUNT(*) OVER () AS total_count, e.provider_episode_id, e.episode_title, e.episode_number, NULL::text AS release_date
+      `SELECT COUNT(*) OVER () AS total_count, e.provider_episode_id, e.episode_title, e.episode_number, NULL::text AS release_date,
+              COALESCE(jsonb_agg(jsonb_build_object(
+                'source', alternative_source.provider_name,
+                'id', alternative.provider_episode_id,
+                'slug', COALESCE(alternative_source.provider_slug, alternative_source.provider_anime_id)
+              ) ORDER BY CASE alternative_source.provider_name WHEN 'otakudesu' THEN 1 WHEN 'samehadaku' THEN 2 WHEN 'oploverz' THEN 3 ELSE 4 END)
+              FILTER (WHERE alternative.id IS NOT NULL), '[]'::jsonb) AS episode_sources
        FROM episodes AS e
        JOIN anime_sources AS src ON src.id = e.source_id
+       LEFT JOIN episodes AS alternative ON alternative.anime_id = e.anime_id
+         AND alternative.episode_number = e.episode_number
+         AND alternative.visibility = 'published'
+         AND alternative.provider_episode_id NOT LIKE 'pembatas-%'
+         AND COALESCE(alternative.episode_title, '') NOT ILIKE '%dalam proses%'
+       LEFT JOIN anime_sources AS alternative_source ON alternative_source.id = alternative.source_id
+         AND alternative_source.source_status <> 'disabled'
        WHERE src.provider_name = $1
          AND (src.provider_slug = $2 OR src.provider_anime_id = $2)
          AND e.visibility = 'published'
@@ -419,6 +451,7 @@ export class PostgresCatalogRepository {
          AND e.provider_episode_id NOT LIKE 'pembatas-%'
          AND COALESCE(e.episode_title, '') NOT ILIKE '%dalam proses%'
          AND ($3::text IS NULL OR e.provider_episode_id ILIKE '%' || $3 || '%' OR e.episode_title ILIKE '%' || $3 || '%' OR e.episode_number::text ILIKE '%' || $3 || '%')
+       GROUP BY e.id, e.provider_episode_id, e.episode_title, e.episode_number
        ORDER BY e.episode_number ASC, e.provider_episode_id ASC
        LIMIT $4 OFFSET $5`,
       [source, slug, query, limit, (page - 1) * limit]
@@ -428,7 +461,8 @@ export class PostgresCatalogRepository {
       id: row.provider_episode_id,
       title: row.episode_title ?? row.provider_episode_id,
       number: Number(row.episode_number),
-      releaseDate: row.release_date
+      releaseDate: row.release_date,
+      sources: row.episode_sources
     })), page, limit, total);
   }
 
@@ -466,16 +500,7 @@ export class PostgresCatalogRepository {
       `SELECT DISTINCT ON (src.provider_name) src.provider_name, src.provider_slug, src.provider_anime_id
        FROM anime_sources AS src
        WHERE src.anime_id = $1
-         AND src.source_status = 'verified'
-         AND EXISTS (
-           SELECT 1
-           FROM episodes AS e
-           WHERE e.source_id = src.id
-             AND e.visibility = 'published'
-             AND e.episode_number > 0
-             AND e.provider_episode_id NOT LIKE 'pembatas-%'
-             AND COALESCE(e.episode_title, '') NOT ILIKE '%dalam proses%'
-         )
+         AND src.source_status <> 'disabled'
        ORDER BY src.provider_name, src.last_success_at DESC NULLS LAST, src.updated_at DESC`,
       [row.anime_id]
     );
@@ -515,8 +540,13 @@ export class PostgresCatalogRepository {
     const status = detail.status?.toLowerCase();
     const catalogStatus = status === 'ongoing' || status === 'completed' || status === 'upcoming' ? status : 'unknown';
     await this.database.query(
-      `UPDATE anime SET synopsis = $2, status = $3, updated_at = NOW() WHERE canonical_slug = $1`,
-      [canonicalSlug(detail.title), detail.synopsis, catalogStatus]
+      `UPDATE anime
+       SET synopsis = $3, status = $4, updated_at = NOW()
+       FROM anime_sources AS source
+       WHERE anime.id = source.anime_id
+         AND source.provider_name = $1
+         AND (source.provider_slug = $2 OR source.provider_anime_id = $2)`,
+      [source, detail.slug, detail.synopsis, catalogStatus]
     );
     const validEpisodes = detail.episodes.filter((episode) => episode.number !== null && Number.isFinite(episode.number) && episode.number > 0);
     for (const episode of validEpisodes) {
@@ -535,7 +565,7 @@ export class PostgresCatalogRepository {
   async findEpisode(source: SourceId, episodeId: string): Promise<SourceEpisodeDetail | null> {
     const result = await this.database.query<EpisodeRow>(
       `WITH ordered_episodes AS (
-         SELECT e.provider_episode_id, e.episode_title, e.episode_number, s.provider_slug AS anime_slug, a.poster_url,
+         SELECT e.anime_id, e.provider_episode_id, e.episode_title, e.episode_number, s.provider_slug AS anime_slug, a.poster_url,
                 LAG(e.provider_episode_id) OVER (PARTITION BY e.anime_id, e.source_id ORDER BY e.episode_number, e.provider_episode_id) AS previous_episode_id,
                 LEAD(e.provider_episode_id) OVER (PARTITION BY e.anime_id, e.source_id ORDER BY e.episode_number, e.provider_episode_id) AS next_episode_id
          FROM episodes AS e
@@ -547,7 +577,7 @@ export class PostgresCatalogRepository {
            AND e.provider_episode_id NOT LIKE 'pembatas-%'
            AND COALESCE(e.episode_title, '') NOT ILIKE '%dalam proses%'
        )
-       SELECT provider_episode_id, episode_title, episode_number, anime_slug, poster_url, previous_episode_id, next_episode_id
+       SELECT anime_id, provider_episode_id, episode_title, episode_number, anime_slug, poster_url, previous_episode_id, next_episode_id
        FROM ordered_episodes
        WHERE provider_episode_id = $2
        LIMIT 1`,
@@ -555,6 +585,19 @@ export class PostgresCatalogRepository {
     );
     const row = result.rows[0];
     if (!row) return null;
+    const alternatives = await this.database.query<{ provider_name: SourceId; provider_episode_id: string; provider_slug: string | null; provider_anime_id: string }>(
+      `SELECT src.provider_name, e.provider_episode_id, src.provider_slug, src.provider_anime_id
+       FROM episodes AS e
+       JOIN anime_sources AS src ON src.id = e.source_id
+       WHERE e.anime_id = $1
+         AND e.episode_number = $2
+         AND src.source_status <> 'disabled'
+         AND e.visibility = 'published'
+         AND e.provider_episode_id NOT LIKE 'pembatas-%'
+         AND COALESCE(e.episode_title, '') NOT ILIKE '%dalam proses%'
+       ORDER BY CASE src.provider_name WHEN 'otakudesu' THEN 1 WHEN 'samehadaku' THEN 2 WHEN 'oploverz' THEN 3 ELSE 4 END, src.updated_at DESC`,
+      [row.anime_id, row.episode_number]
+    );
     return {
       source,
       id: row.provider_episode_id,
@@ -563,7 +606,9 @@ export class PostgresCatalogRepository {
       releaseTime: null,
       previousEpisodeId: row.previous_episode_id ?? null,
       nextEpisodeId: row.next_episode_id ?? null,
-      playback: []
+      playback: [],
+      availableSources: alternatives.rows.map((alternative) => ({ source: alternative.provider_name, slug: alternative.provider_slug ?? alternative.provider_anime_id })),
+      episodeSources: alternatives.rows.map((alternative) => ({ source: alternative.provider_name, id: alternative.provider_episode_id, slug: alternative.provider_slug ?? alternative.provider_anime_id }))
     };
   }
 
@@ -623,12 +668,19 @@ export class PostgresCatalogRepository {
 
   async listSchedule(source?: SourceId): Promise<SourceScheduleDay[]> {
     const result = await this.database.query<ScheduleRow>(
-      `SELECT se.day, s.provider_name, s.provider_slug, a.title, a.poster_url, se.episode_label
-       FROM schedule_entries AS se
-       JOIN anime AS a ON a.id = se.anime_id
-       JOIN anime_sources AS s ON s.id = se.source_id
-       WHERE a.visibility = 'published' AND ($1::text IS NULL OR s.provider_name = $1)
-       ORDER BY se.day, a.title`,
+      `WITH ranked_schedule AS (
+         SELECT se.day, s.provider_name, s.provider_slug, a.title, a.poster_url, se.episode_label,
+                ROW_NUMBER() OVER (PARTITION BY se.day, a.id ORDER BY CASE s.provider_name WHEN 'otakudesu' THEN 1 WHEN 'samehadaku' THEN 2 WHEN 'oploverz' THEN 3 ELSE 4 END, se.updated_at DESC) AS source_rank
+         FROM schedule_entries AS se
+         JOIN anime AS a ON a.id = se.anime_id
+         JOIN anime_sources AS s ON s.id = se.source_id
+         WHERE a.visibility = 'published'
+           AND s.source_status <> 'disabled'
+           AND ($1::text IS NULL OR s.provider_name = $1)
+       )
+       SELECT day, provider_name, provider_slug, title, poster_url, episode_label
+       FROM ranked_schedule WHERE source_rank = 1
+       ORDER BY day, title`,
       [source ?? null]
     );
     const groups = new Map<string, SourceScheduleDay['items']>();

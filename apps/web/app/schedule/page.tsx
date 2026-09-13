@@ -10,7 +10,6 @@ type ScheduleItem = { source: string; slug: string; title: string; posterUrl: st
 type ScheduleDay = { day: string; items: ScheduleItem[] };
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
-const sources = ['otakudesu', 'samehadaku', 'oploverz'];
 const dayOrder = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
 
 function scheduleHref(day: string, source: string) {
@@ -30,34 +29,17 @@ function ScheduleContent() {
   const [groups, setGroups] = useState<ScheduleDay[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [failedSources, setFailedSources] = useState<string[]>([]);
+
   const activeDay = searchParams.get('day') ?? 'Semua';
-  const activeSource = searchParams.get('source') ?? 'Semua';
+  const activeSource = 'Semua';
 
   useEffect(() => {
     const load = async () => {
       try {
-        const responses = await Promise.allSettled(sources.map(async (source) => {
-          const response = await fetch(`${apiBaseUrl}/api/v1/sources/${source}/schedule`);
-          if (!response.ok) throw new Error(`${source} schedule gagal`);
-          const payload = await response.json() as { success: boolean; data: ScheduleDay[]; error?: { message?: string } };
-          if (!payload.success) throw new Error(payload.error?.message ?? `${source} schedule gagal`);
-          return payload.data;
-        }));
-        const rejected = responses.flatMap((result, index) => result.status === 'rejected' ? [sources[index]] : []);
-        const successful = responses.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
-        if (successful.length === 0) throw new Error('Jadwal tidak tersedia');
-        setFailedSources(rejected);
-        const merged = new Map<string, ScheduleItem[]>();
-        successful.flat().forEach((group) => {
-          const items = merged.get(group.day) ?? [];
-          const existing = new Set(items.map((item) => `${item.source}:${item.slug}`));
-          group.items.forEach((item) => {
-            if (!existing.has(`${item.source}:${item.slug}`)) items.push(item);
-          });
-          merged.set(group.day, items);
-        });
-        setGroups([...merged.entries()].sort(([a], [b]) => dayOrder.indexOf(a) - dayOrder.indexOf(b)).map(([day, items]) => ({ day, items })));
+        const response = await fetch(`${apiBaseUrl}/api/v1/schedule`);
+        const payload = await response.json() as { success: boolean; data: ScheduleDay[]; error?: { message?: string } };
+        if (!response.ok || !payload.success) throw new Error(payload.error?.message ?? 'Jadwal tidak tersedia');
+        setGroups([...payload.data].sort((a, b) => dayOrder.indexOf(a.day) - dayOrder.indexOf(b.day)));
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : 'Jadwal tidak tersedia');
       } finally {
@@ -70,10 +52,7 @@ function ScheduleContent() {
   const total = useMemo(() => groups.reduce((sum, group) => sum + group.items.length, 0), [groups]);
   const availableDays = useMemo(() => ['Semua', ...new Set(groups.map((group) => group.day))], [groups]);
   const filteredGroups = useMemo(() => filterScheduleGroups(groups, activeDay, activeSource), [activeDay, activeSource, groups]);
-  const sourceCounts = useMemo(() => sources.map((source) => ({
-    source,
-    count: groups.reduce((sum, group) => sum + group.items.filter((item) => item.source === source).length, 0)
-  })), [groups]);
+
 
   return (
     <main className="app-page">
@@ -85,14 +64,14 @@ function ScheduleContent() {
         </section>
         {!loading && !error && groups.length > 0 && <section className="schedule-controls" aria-label="Filter jadwal">
           <div className="filter-group"><span className="filter-label">Hari</span><div className="filter-pills">{availableDays.map((day) => <a id={`schedule-day-${day.toLowerCase()}`} aria-current={activeDay === day ? 'page' : undefined} className={activeDay === day ? 'filter-pill active' : 'filter-pill'} href={scheduleHref(day, activeSource)} key={day}>{day}</a>)}</div></div>
-          <div className="filter-group"><span className="filter-label">Sumber</span><div className="filter-pills"><a id="schedule-source-semua" aria-current={activeSource === 'Semua' ? 'page' : undefined} className={activeSource === 'Semua' ? 'filter-pill active' : 'filter-pill'} href={scheduleHref(activeDay, 'Semua')}>Semua <b>{total}</b></a>{sourceCounts.map(({ source, count }) => <a id={`schedule-source-${source}`} aria-current={activeSource === source ? 'page' : undefined} className={activeSource === source ? 'filter-pill active' : 'filter-pill'} href={scheduleHref(activeDay, source)} key={source}>{source} <b>{count}</b></a>)}</div></div>
+
         </section>}
         {error && <div className="status-card error-card">{error}</div>}
         {loading && <div className="status-card">Menyusun kalender dari katalog tersimpan...</div>}
-        {!loading && failedSources.length > 0 && <div className="status-card warning-card">Sebagian sumber sedang tidak tersedia: {failedSources.join(', ')}. Jadwal lain tetap ditampilkan.</div>}
+
         {!loading && !error && groups.length === 0 && <div className="status-card">Jadwal belum tersedia.</div>}
         {!loading && !error && groups.length > 0 && filteredGroups.length === 0 && <div className="status-card">Tidak ada jadwal untuk filter ini.</div>}
-        <div className="schedule-grid">{filteredGroups.map((group) => <section className="schedule-day" key={group.day}><div className="day-heading"><div><span className="day-kicker">RELEASE DAY</span><h2>{group.day}</h2></div><span>{group.items.length} judul</span></div><div className="schedule-items">{group.items.map((item) => <a className="schedule-item" href={`/anime/${item.source}/${item.slug}`} key={`${item.source}-${item.slug}`}><PosterImage className="schedule-poster" src={item.posterUrl} alt="" loading="lazy" /><span className="schedule-time">{item.episodeLabel ?? 'Update'}</span><span className="schedule-title">{item.title}</span><span className="schedule-source">{item.source}</span><span className="episode-play">→</span></a>)}</div></section>)}</div>
+        <div className="schedule-grid">{filteredGroups.map((group) => <section className="schedule-day" key={group.day}><div className="day-heading"><div><span className="day-kicker">RELEASE DAY</span><h2>{group.day}</h2></div><span>{group.items.length} judul</span></div><div className="schedule-items">{group.items.map((item) => <a className="schedule-item" href={`/anime/${item.source}/${item.slug}`} key={`${item.source}:${item.slug}`}><PosterImage className="schedule-poster" src={item.posterUrl} alt="" loading="lazy" /><span className="schedule-time">{item.episodeLabel ?? 'Update'}</span><span className="schedule-title">{item.title}</span><span className="episode-play">→</span></a>)}</div></section>)}</div>
       </div>
     </main>
   );

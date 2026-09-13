@@ -47,7 +47,7 @@ describe('dead link self-check', () => {
       posterUrl: null, latestEpisode: null, releaseDay: null
     }]);
 
-    const sql = (query.mock.calls as unknown as Array<[string]>)[1]?.[0] ?? '';
+    const sql = (query.mock.calls as unknown as Array<[string]>)[3]?.[0] ?? '';
     expect(sql).toContain("CASE WHEN source_status = 'verified' THEN 'verified' WHEN source_status = 'disabled' THEN 'disabled' ELSE 'discovered' END");
   });
 

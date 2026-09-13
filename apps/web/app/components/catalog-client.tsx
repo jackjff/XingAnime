@@ -9,7 +9,7 @@ import { fetchCatalogPage, type CatalogItem, type CatalogMeta } from '../lib/cat
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
 const letters = ['Semua', ...Array.from({ length: 26 }, (_, index) => String.fromCharCode(65 + index))];
-const sources = ['Semua', 'otakudesu', 'samehadaku', 'oploverz'];
+
 const pageLimit = 24;
 
 type CatalogRequestOptions = { query: string; letter: string; source: string; page: number };
@@ -32,17 +32,18 @@ export function CatalogClient() {
   const searchParams = useSearchParams();
   const urlQuery = searchParams.get('q')?.trim() ?? '';
   const urlLetter = searchParams.get('letter')?.toUpperCase() ?? 'Semua';
-  const urlSource = searchParams.get('source') ?? 'Semua';
+
   const urlPage = Number.parseInt(searchParams.get('page') ?? '1', 10);
   const page = Number.isFinite(urlPage) && urlPage > 0 ? urlPage : 1;
   const letter = letters.includes(urlLetter) ? urlLetter : 'Semua';
-  const source = sources.includes(urlSource) ? urlSource : 'Semua';
+  const source = 'Semua';
 
   const options: CatalogRequestOptions = { query: urlQuery, letter, source, page };
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [meta, setMeta] = useState<CatalogMeta | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [retryTick, setRetryTick] = useState(0);
   const lastKey = useRef<string | null>(null);
 
   useEffect(() => {
@@ -67,15 +68,14 @@ export function CatalogClient() {
         if (lastKey.current === key) setLoading(false);
       });
     return () => controller.abort();
-  }, [urlQuery, letter, source, page]);
+  }, [urlQuery, letter, source, page, retryTick]);
 
   const retry = useCallback(() => {
     lastKey.current = null;
     setError(null);
     setLoading(true);
-    setPageTick((tick) => tick + 1);
+    setRetryTick((tick) => tick + 1);
   }, []);
-  const [, setPageTick] = useState(0);
 
   const title = urlQuery ? `Hasil pencarian untuk “${urlQuery}”` : letter === 'Semua' ? 'Semua Anime' : `Anime huruf ${letter}`;
   return (
@@ -84,7 +84,7 @@ export function CatalogClient() {
       <div className="page-shell catalog-shell">
         <div className="section-heading"><div><p className="eyebrow">XING ANIME CATALOG</p><h1>Jelajahi katalog</h1><p className="section-note">Pencarian, filter A–Z, dan sumber dari metadata PostgreSQL.</p></div><a className="secondary-button" href="/">← Beranda</a></div>
         <form className="catalog-search" action="/catalog" method="get"><label htmlFor="catalog-query">Cari anime</label><div><input id="catalog-query" name="q" defaultValue={urlQuery} placeholder="Judul, alias, atau slug" /><button className="primary-button" type="submit">Cari</button></div>{letter !== 'Semua' && <input type="hidden" name="letter" value={letter} />}{source !== 'Semua' && <input type="hidden" name="source" value={source} />}</form>
-        <div className="catalog-filter-row"><div className="catalog-filter-group"><span className="filter-label">Huruf</span><div className="catalog-letter-list">{letters.map((value) => <a className={letter === value ? 'filter-pill active' : 'filter-pill'} aria-current={letter === value ? 'page' : undefined} href={catalogHref(urlQuery, value, source, 1)} key={value}>{value}</a>)}</div></div><div className="catalog-filter-group"><span className="filter-label">Sumber</span><div className="catalog-filter-pills">{sources.map((value) => <a className={source === value ? 'filter-pill active' : 'filter-pill'} aria-current={source === value ? 'page' : undefined} href={catalogHref(urlQuery, letter, value, 1)} key={value}>{value}</a>)}</div></div></div>
+        <div className="catalog-filter-row"><div className="catalog-filter-group"><span className="filter-label">Huruf</span><div className="catalog-letter-list">{letters.map((value) => <a className={letter === value ? 'filter-pill active' : 'filter-pill'} aria-current={letter === value ? 'page' : undefined} href={catalogHref(urlQuery, value, source, 1)} key={value}>{value}</a>)}</div></div></div>
         <div className="section-heading catalog-heading"><div><p className="eyebrow">DATABASE ANIME</p><h2>{title}</h2></div><span className="section-note">{meta ? `${meta.total} judul · halaman ${meta.page}/${meta.pageCount || 1}` : 'Memuat...'}</span></div>
         {loading && <div className="status-card">Memuat katalog...</div>}
         {error && <div className="status-card error-card">{error}<button className="secondary-button" onClick={retry} type="button">Coba lagi</button></div>}

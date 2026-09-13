@@ -19,4 +19,16 @@ describe('RedisLease', () => {
     const lease = new RedisLease({ set: vi.fn(async () => null), eval: vi.fn(async () => 0) }, 'xing:test:lease', 30_000, () => 'token-2');
     await expect(lease.acquire()).resolves.toBeNull();
   });
+
+  it('extends only a lease still owned by its token', async () => {
+    const evalScript = vi.fn(async () => 1);
+    const lease = new RedisLease({ set: vi.fn(async () => 'OK'), eval: evalScript }, 'xing:test:lease', 30_000, () => 'token-3');
+
+    await expect(lease.renew('token-3')).resolves.toBe(true);
+
+    expect(evalScript).toHaveBeenCalledWith(expect.stringContaining('pexpire'), {
+      keys: ['xing:test:lease'],
+      arguments: ['token-3', '30000']
+    });
+  });
 });

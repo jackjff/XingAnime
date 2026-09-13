@@ -15,7 +15,7 @@ export function SiteHeader({ active = 'home', searchValue = '', onSearchChange }
       </a>
       <nav className="nav-links" aria-label="Navigasi utama">
         <a className={active === 'home' ? 'active' : ''} href="/">Beranda</a>
-        <a href="/catalog">Katalog</a>
+        <a className={active === 'catalog' ? 'active' : ''} href="/catalog">Katalog</a>
         <a className={active === 'schedule' ? 'active' : ''} href="/schedule">Jadwal</a>
         <a href="/history">Riwayat</a>
       </nav>

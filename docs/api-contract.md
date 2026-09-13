@@ -92,6 +92,22 @@ CATALOG_UNAVAILABLE
 
 ## Anime detail
 
+## Provider discovery
+
+### `GET /api/v1/sources/{source}/discover/{kind}`
+
+Direct discovery is cache-backed and rate-limited by the Xing API; browser clients must never call Sanka directly.
+
+- `kind`: `ongoing`, `completed`, `search`, atau `genre`
+- `page`: opsional, default `1`
+- `q`: wajib untuk `search` dan `genre`; isi judul atau ID genre provider
+
+Respons `data` berisi `{ items, page, hasNext, hasPrevious, pageCount }`. `pageCount` bernilai `null` bila provider tidak memberi jumlah halaman.
+
+### `GET /api/v1/sources/{source}/genres`
+
+Mengembalikan genre provider `{ id, title }` yang tersedia. Saat ini Otakudesu dan Samehadaku menyediakan daftar genre; Oploverz menjawab array kosong karena endpoint genre tidak didokumentasikan.
+
 ### `GET /api/v1/sources/{source}/anime/{slug}`
 
 By default returns the backwards-compatible full detail shape. For a lightweight detail request use:

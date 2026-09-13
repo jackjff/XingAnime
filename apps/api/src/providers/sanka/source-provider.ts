@@ -10,6 +10,9 @@ import type {
   SourceEpisodeSummary,
   SourceScheduleDay,
   SourceId,
+  SourceDiscoveryPage,
+  SourceDiscoveryQuery,
+  SourceGenre,
   PlaybackMode,
   PlaybackReason
 } from '../source-types.js';
@@ -53,6 +56,35 @@ const sourcePaths: Record<SourceId, SourcePaths> = {
   }
 };
 
+function discoveryPath(source: SourceId, query: SourceDiscoveryQuery): string | null {
+  const page = `?page=${query.page}`;
+  const value = query.query ? encodeURIComponent(query.query) : '';
+  if (source === 'otakudesu') {
+    if (query.kind === 'ongoing') return `/anime/ongoing-anime${page}`;
+    if (query.kind === 'completed') return `/anime/complete-anime${page}`;
+    if (query.kind === 'search' && value) return `/anime/search/${value}`;
+    if (query.kind === 'genre' && value) return `/anime/genre/${value}${page}`;
+  }
+  if (source === 'samehadaku') {
+    if (query.kind === 'ongoing') return `/anime/samehadaku/ongoing${page}`;
+    if (query.kind === 'completed') return `/anime/samehadaku/completed${page}`;
+    if (query.kind === 'search' && value) return `/anime/samehadaku/search?q=${value}&page=${query.page}`;
+    if (query.kind === 'genre' && value) return `/anime/samehadaku/genres/${value}${page}`;
+  }
+  if (source === 'oploverz') {
+    if (query.kind === 'ongoing') return `/anime/oploverz/ongoing${page}`;
+    if (query.kind === 'completed') return `/anime/oploverz/completed${page}`;
+    if (query.kind === 'search' && value) return `/anime/oploverz/search/${value}`;
+  }
+  return null;
+}
+
+function genresPath(source: SourceId): string | null {
+  if (source === 'otakudesu') return '/anime/genre';
+  if (source === 'samehadaku') return '/anime/samehadaku/genres';
+  return null;
+}
+
 const englishDays: Record<string, string> = {
   monday: 'Senin',
   tuesday: 'Selasa',
@@ -74,6 +106,10 @@ function numberValue(value: unknown): number | null {
   return match ? Number(match[0].replace(',', '.')) : null;
 }
 
+function booleanValue(value: unknown): boolean {
+  return value === true;
+}
+
 function synopsisValue(value: unknown): string | null {
   if (typeof value === 'string') return value.trim() || null;
   if (!value || typeof value !== 'object') return null;
@@ -84,7 +120,7 @@ function synopsisValue(value: unknown): string | null {
 }
 
 const externalOnlyPlaybackHosts = new Set(['desustream.com']);
-const knownUnavailablePlaybackHosts = new Set(['desustream.net']);
+const knownUnavailablePlaybackHosts = new Set(['desustream.net', 'wibuu.info']);
 const adHeavyPlaybackHostFragments = ['filedon'];
 const knownUnavailableServerLabels = new Map<string, PlaybackReason>([
   ['ondesuhd', 'provider_unavailable'],
@@ -163,6 +199,54 @@ export function normalizeSourceHome(source: SourceId, payload: unknown): SourceA
       latestEpisode,
       releaseDay: stringValue(item.releaseDay ?? item.releasedOn)
     }];
+  });
+}
+
+function discoveryItems(source: SourceId, payload: unknown): unknown[] {
+  const root = payload as JsonObject;
+  if (source === 'oploverz') return Array.isArray(root.anime_list) ? root.anime_list : [];
+  return Array.isArray(root.data?.animeList) ? root.data.animeList : [];
+}
+
+export function normalizeSourceDiscovery(source: SourceId, payload: unknown, requestedPage: number): SourceDiscoveryPage {
+  const root = payload as JsonObject;
+  const items = discoveryItems(source, payload).flatMap((raw: unknown) => {
+    if (!raw || typeof raw !== 'object') return [];
+    const item = raw as JsonObject;
+    const slug = stringValue(source === 'oploverz' ? item.slug : item.animeId);
+    const title = stringValue(item.title);
+    if (!slug || !title) return [];
+    const normalizedTitle = source === 'oploverz' ? title.replace(/\s+Episode\s+.*/i, '').trim() : title;
+    const upstreamPoster = stringValue(item.poster);
+    return [{
+      source,
+      slug,
+      detailSlug: source === 'oploverz' ? slug.replace(/-episode-(?:\d+|end).*$/i, '') : slug,
+      title: normalizedTitle,
+      posterUrl: isBlockedPosterUrl(upstreamPoster) ? null : upstreamPoster,
+      latestEpisode: numberValue(item.episode ?? item.episodes),
+      releaseDay: stringValue(item.releaseDay ?? item.releasedOn)
+    }];
+  });
+  const pagination = isJsonObject(root.pagination) ? root.pagination : {};
+  return {
+    items,
+    page: numberValue(pagination.currentPage) ?? requestedPage,
+    hasNext: booleanValue(pagination.hasNextPage ?? pagination.hasNext),
+    hasPrevious: booleanValue(pagination.hasPrevPage ?? pagination.hasPrev),
+    pageCount: numberValue(pagination.totalPages)
+  };
+}
+
+export function normalizeSourceGenres(payload: unknown): SourceGenre[] {
+  const root = payload as JsonObject;
+  const genres = Array.isArray(root.data?.genreList) ? root.data.genreList : [];
+  return genres.flatMap((raw: unknown) => {
+    if (!raw || typeof raw !== 'object') return [];
+    const genre = raw as JsonObject;
+    const id = stringValue(genre.genreId ?? genre.slug ?? genre.id);
+    const title = stringValue(genre.title ?? genre.name);
+    return id && title ? [{ id, title }] : [];
   });
 }
 
@@ -323,6 +407,7 @@ export type SankaSourceProviderOptions = {
   circuit?: SankaCircuitBreaker;
   posterResolver?: (title: string) => Promise<string | null>;
   fetcher?: Fetcher;
+  requestTimeoutMilliseconds?: number;
 };
 
 export class SankaSourceProvider implements AnimeSourceProvider {
@@ -332,6 +417,7 @@ export class SankaSourceProvider implements AnimeSourceProvider {
   private readonly circuit: SankaCircuitBreaker;
   private readonly posterResolver?: (title: string) => Promise<string | null>;
   private readonly fetcher: Fetcher;
+  private readonly requestTimeoutMilliseconds: number;
 
   constructor(options: SankaSourceProviderOptions) {
     this.source = options.source;
@@ -340,6 +426,24 @@ export class SankaSourceProvider implements AnimeSourceProvider {
     this.circuit = options.circuit ?? new SankaCircuitBreaker();
     this.posterResolver = options.posterResolver;
     this.fetcher = options.fetcher ?? ((url, init) => fetch(url, init));
+    this.requestTimeoutMilliseconds = Math.max(1_000, options.requestTimeoutMilliseconds ?? 20_000);
+  }
+
+  private async fetchWithTimeout(url: string): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutError = () => new Error(`Sanka ${this.source} request timed out`);
+    const abortTimer = setTimeout(() => controller.abort(timeoutError()), this.requestTimeoutMilliseconds);
+    const rejectionTimer = new Promise<never>((_resolve, reject) => {
+      setTimeout(() => reject(timeoutError()), this.requestTimeoutMilliseconds);
+    });
+    try {
+      return await Promise.race([
+        this.fetcher(url, { headers: { accept: 'application/json' }, signal: controller.signal }),
+        rejectionTimer
+      ]);
+    } finally {
+      clearTimeout(abortTimer);
+    }
   }
 
   async getAllAnime(): Promise<Array<{ title: string; slug: string }>> {
@@ -351,7 +455,7 @@ export class SankaSourceProvider implements AnimeSourceProvider {
     // A different request may have opened the shared circuit while this one queued.
     if (this.circuit.isOpen()) throw this.circuit.createOpenError(this.source);
     try {
-      const response = await this.fetcher(`${this.baseUrl}${unlimitedPath}`, { headers: { accept: 'application/json' } });
+      const response = await this.fetchWithTimeout(`${this.baseUrl}${unlimitedPath}`);
       const payload = await readSankaJson(response, `${this.source} unlimited`);
       const root = payload as JsonObject;
       const list = root.data?.list;
@@ -385,7 +489,7 @@ export class SankaSourceProvider implements AnimeSourceProvider {
     }
   }
 
-  private matchesExpectedShape(operation: 'home' | 'detail' | 'episode' | 'schedule' | 'server', payload: unknown): boolean {
+  private matchesExpectedShape(operation: 'home' | 'detail' | 'episode' | 'schedule' | 'server' | 'discovery' | 'genres', payload: unknown): boolean {
     if (!isJsonObject(payload)) return false;
     if (operation === 'home') {
       return this.source === 'otakudesu'
@@ -407,16 +511,18 @@ export class SankaSourceProvider implements AnimeSourceProvider {
           ? Array.isArray(payload.data?.days)
           : Array.isArray(payload.data);
     }
+    if (operation === 'discovery') return Array.isArray(this.source === 'oploverz' ? payload.anime_list : payload.data?.animeList);
+    if (operation === 'genres') return Array.isArray(payload.data?.genreList);
     return typeof (payload.data?.url ?? payload.url) === 'string';
   }
 
-  private async request(path: string, operation: 'home' | 'detail' | 'episode' | 'schedule' | 'server'): Promise<unknown> {
+  private async request(path: string, operation: 'home' | 'detail' | 'episode' | 'schedule' | 'server' | 'discovery' | 'genres'): Promise<unknown> {
     if (this.circuit?.isOpen()) throw this.circuit.createOpenError(`${this.source} ${operation}`);
     await this.limiter.acquire();
     // A different request may have opened the shared circuit while this one queued.
     if (this.circuit.isOpen()) throw this.circuit.createOpenError(this.source);
     try {
-      const response = await this.fetcher(`${this.baseUrl}${path}`, { headers: { accept: 'application/json' } });
+      const response = await this.fetchWithTimeout(`${this.baseUrl}${path}`);
       const payload = await readSankaJson(response, `${this.source} ${operation}`);
       if (!this.matchesExpectedShape(operation, payload)) {
         throw new SankaUpstreamError(`Sanka ${this.source} ${operation} returned an unsupported response shape`, 502);
@@ -458,5 +564,17 @@ export class SankaSourceProvider implements AnimeSourceProvider {
 
   async getSchedule(): Promise<SourceScheduleDay[]> {
     return normalizeSourceSchedule(this.source, await this.request(sourcePaths[this.source].schedule, 'schedule'));
+  }
+
+  async discover(query: SourceDiscoveryQuery): Promise<SourceDiscoveryPage> {
+    const path = discoveryPath(this.source, query);
+    if (!path) throw new Error(`Sanka ${this.source} does not support ${query.kind} discovery`);
+    return normalizeSourceDiscovery(this.source, await this.request(path, 'discovery'), query.page);
+  }
+
+  async getGenres(): Promise<SourceGenre[]> {
+    const path = genresPath(this.source);
+    if (!path) return [];
+    return normalizeSourceGenres(await this.request(path, 'genres'));
   }
 }

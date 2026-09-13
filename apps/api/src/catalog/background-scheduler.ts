@@ -37,6 +37,8 @@ export async function runMetadataCycle(stages: {
 type Lease = {
   acquire(): Promise<string | null>;
   release(token: string | null): Promise<void>;
+  renew?(token: string): Promise<boolean>;
+  renewalIntervalMilliseconds?: number;
 };
 
 type Job = {
@@ -77,9 +79,17 @@ export class BackgroundScheduler {
     const active = Promise.resolve().then(async () => {
       const token = job.lease ? await job.lease.acquire() : null;
       if (job.lease && !token) return;
+      let renewalTimer: ReturnType<typeof setInterval> | undefined;
+      if (token && job.lease?.renew && job.lease.renewalIntervalMilliseconds) {
+        renewalTimer = setInterval(() => {
+          void job.lease?.renew?.(token).catch((error: unknown) => this.onError(`${job.name}:lease-renewal`, error));
+        }, job.lease.renewalIntervalMilliseconds);
+        renewalTimer.unref();
+      }
       try {
         await job.run();
       } finally {
+        if (renewalTimer) clearInterval(renewalTimer);
         await job.lease?.release(token);
       }
     }).catch((error) => this.onError(job.name, error))

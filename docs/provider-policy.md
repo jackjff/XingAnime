@@ -4,6 +4,8 @@
 
 Sanka menyatakan batas **30 request per menit**, dengan tiga peringatan sebelum ban permanen.
 
+Dokumentasi endpoint resmi yang diberikan pemilik proyek adalah sumber kebenaran untuk path dan parameter provider. Lihat [`sanka-api-reference.md`](sanka-api-reference.md). Kontrak publik Xing tetap dinormalisasi oleh adapter, bukan meneruskan respons Sanka mentah.
+
 ## Budget Xing Anime
 
 - Internal hard budget: 18 request/menit.

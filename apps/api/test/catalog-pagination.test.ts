@@ -136,8 +136,8 @@ describe('Postgres catalog pagination', () => {
     expect(sql).toContain('ROW_NUMBER() OVER');
     expect(sql).toContain('PARTITION BY a.id');
     expect(sql).toContain("WHERE source_rank = 1");
-    expect(sql).toContain('HAVING COUNT(e.id) > 0');
-    expect(sql).toContain('JOIN episodes AS e');
+    expect(sql).not.toContain('HAVING COUNT(e.id) > 0');
+    expect(sql).toContain('LEFT JOIN episodes AS e');
   });
 
   it('returns an empty page without losing pagination metadata', async () => {
@@ -219,7 +219,6 @@ describe('Postgres catalog pagination', () => {
 
     expect(result).toMatchObject({ firstEpisodeId: 'episode-1', latestEpisodeId: 'episode-479', episodes: [] });
     expect(query.mock.calls[0]?.[0]).toEqual(expect.stringContaining('first_episode_id'));
-    expect(query.mock.calls[1]?.[0]).toEqual(expect.stringContaining('EXISTS'));
-    expect(query.mock.calls[1]?.[0]).toEqual(expect.stringContaining("e.visibility = 'published'"));
+    expect(query.mock.calls[1]?.[0]).toEqual(expect.stringContaining("src.source_status <> 'disabled'"));
   });
 });

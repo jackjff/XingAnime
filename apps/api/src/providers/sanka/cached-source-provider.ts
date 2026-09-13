@@ -4,7 +4,10 @@ import type {
   PlaybackSource,
   SourceAnimeDetail,
   SourceAnimeSummary,
+  SourceDiscoveryPage,
+  SourceDiscoveryQuery,
   SourceEpisodeDetail,
+  SourceGenre,
   SourceScheduleDay
 } from '../source-types.js';
 
@@ -15,6 +18,8 @@ export type SourceCacheTtls = {
   episode: number;
   playback: number;
   schedule: number;
+  discovery: number;
+  genres: number;
 };
 
 export class CachedSourceProvider implements AnimeSourceProvider {
@@ -36,6 +41,8 @@ export class CachedSourceProvider implements AnimeSourceProvider {
       episode: 43_200_000,
       playback: 180_000,
       schedule: 600_000,
+      discovery: 600_000,
+      genres: 86_400_000,
       ...ttlOverrides
     };
     if (upstream.getAllAnime) {
@@ -80,5 +87,16 @@ export class CachedSourceProvider implements AnimeSourceProvider {
 
   getSchedule(): Promise<SourceScheduleDay[]> {
     return this.cached(`sanka:${this.source}:schedule`, this.ttl.schedule, () => this.upstream.getSchedule());
+  }
+
+  discover(query: SourceDiscoveryQuery): Promise<SourceDiscoveryPage> {
+    if (!this.upstream.discover) throw new Error(`Source ${this.source} does not support discovery`);
+    const key = `${query.kind}:${query.page}:${query.query ?? ''}`;
+    return this.cached(`sanka:${this.source}:discovery:${key}`, this.ttl.discovery, () => this.upstream.discover!(query));
+  }
+
+  getGenres(): Promise<SourceGenre[]> {
+    if (!this.upstream.getGenres) return Promise.resolve([]);
+    return this.cached(`sanka:${this.source}:genres`, this.ttl.genres, () => this.upstream.getGenres!());
   }
 }

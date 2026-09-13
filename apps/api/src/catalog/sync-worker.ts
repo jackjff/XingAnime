@@ -1,4 +1,5 @@
 import type { SourceAnimeDetail, SourceAnimeSummary, SourceId, SourceScheduleDay } from '../providers/source-types.js';
+import { PosterRateLimitError } from '../providers/anilist/client.js';
 import { isBlockedPosterUrl } from '../providers/poster-enricher.js';
 import { isDefinitiveDeadLink } from '../providers/sanka/response.js';
 
@@ -180,17 +181,27 @@ export class CatalogSyncWorker {
       return { attempted: 0, updated: 0, unresolved: 0 };
     }
     const candidates = await this.repository.listMissingPosters(limit);
+    let attempted = 0;
     let updated = 0;
+    let unresolved = 0;
     for (const candidate of candidates) {
-      const posterUrl = await this.resolvePoster(candidate.title).catch(() => null);
+      attempted += 1;
+      let posterUrl: string | null;
+      try {
+        posterUrl = await this.resolvePoster(candidate.title);
+      } catch (cause) {
+        if (cause instanceof PosterRateLimitError) return { attempted, updated, unresolved };
+        posterUrl = null;
+      }
       if (isBlockedPosterUrl(posterUrl)) {
         await this.repository.markPosterUnresolved?.(candidate.id);
+        unresolved += 1;
         continue;
       }
       await this.repository.updatePoster(candidate.id, posterUrl as string);
       updated += 1;
     }
-    return { attempted: candidates.length, updated, unresolved: candidates.length - updated };
+    return { attempted, updated, unresolved };
   }
 
   async hydrateDiscoveredSources(limit = 12): Promise<{ attempted: number; succeeded: number; failed: number; stoppedOnRateLimit: boolean }> {

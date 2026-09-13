@@ -11,6 +11,12 @@ type AniListResponse = {
 
 type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
 
+export class PosterRateLimitError extends Error {
+  constructor() {
+    super('AniList poster resolver rate limited');
+  }
+}
+
 const sleep = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
 const query = `query ($search: String) {
@@ -31,7 +37,8 @@ function seasonOrdinal(value: string): string {
 function searchCandidates(title: string): string[] {
   const normalized = title.replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
   const words = normalized.split(/\s+/).filter(Boolean);
-  const candidates = [title, normalized];
+  const asciiNormalized = normalized.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+  const candidates = [title, normalized, asciiNormalized];
   const seasonAlias = normalized.replace(/\bS(\d+)\b/gi, (_match, value: string) => `${seasonOrdinal(value)} Season`);
   if (seasonAlias !== normalized) candidates.push(seasonAlias);
   const spacedDewa = normalized.replace(/\bdewa\b/gi, 'de wa');
@@ -110,7 +117,7 @@ export class AniListPosterClient {
         if (response.status === 429) {
           const retryAfter = Number(response.headers.get('retry-after'));
           this.nextRequestAt = Date.now() + Math.max(this.minRequestIntervalMs, Number.isFinite(retryAfter) ? retryAfter * 1000 : 60_000);
-          return null;
+          throw new PosterRateLimitError();
         }
         if (!response.ok) continue;
 
@@ -122,7 +129,8 @@ export class AniListPosterClient {
           this.cache.set(title, posterUrl);
           return posterUrl;
         }
-      } catch {
+      } catch (cause) {
+        if (cause instanceof PosterRateLimitError) throw cause;
         // Try the next candidate; the original provider poster remains the fallback.
       }
     }

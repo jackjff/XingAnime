@@ -15,6 +15,7 @@ export type SourceEpisodeSummary = {
   title: string;
   number: number | null;
   releaseDate: string | null;
+  sources?: Array<{ source: SourceId; id: string; slug: string }>;
 };
 
 export type SourceAnimeDetail = {
@@ -46,6 +47,27 @@ export type SourceScheduleDay = {
   items: SourceScheduleItem[];
 };
 
+export type SourceDiscoveryKind = 'ongoing' | 'completed' | 'search' | 'genre';
+
+export type SourceDiscoveryQuery = {
+  kind: SourceDiscoveryKind;
+  page: number;
+  query?: string;
+};
+
+export type SourceDiscoveryPage = {
+  items: SourceAnimeSummary[];
+  page: number;
+  hasNext: boolean;
+  hasPrevious: boolean;
+  pageCount: number | null;
+};
+
+export type SourceGenre = {
+  id: string;
+  title: string;
+};
+
 export type PlaybackMode = 'embed' | 'external' | 'unavailable' | 'unknown';
 export type PlaybackReason = 'provider_frame_policy' | 'provider_unavailable' | 'provider_ads' | 'not_verified' | null;
 
@@ -68,6 +90,8 @@ export type SourceEpisodeDetail = {
   previousEpisodeId: string | null;
   nextEpisodeId: string | null;
   playback: PlaybackSource[];
+  availableSources?: Array<{ source: SourceId; slug: string }>;
+  episodeSources?: Array<{ source: SourceId; id: string; slug: string }>;
 };
 
 export type CatalogQuery = {
@@ -102,4 +126,6 @@ export type AnimeSourceProvider = {
   getEpisode(id: string): Promise<SourceEpisodeDetail>;
   resolveServer(serverId: string): Promise<PlaybackSource>;
   getSchedule(): Promise<SourceScheduleDay[]>;
+  discover?(query: SourceDiscoveryQuery): Promise<SourceDiscoveryPage>;
+  getGenres?(): Promise<SourceGenre[]>;
 };

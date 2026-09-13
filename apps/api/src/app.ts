@@ -2,7 +2,7 @@ import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { AnimeSummary } from './providers/sanka/mapper.js';
 import type { HomeResult } from './providers/sanka/cached-client.js';
-import type { AnimeSourceProvider, CatalogQuery, EpisodeQuery, PageResult, SourceAnimeDetail, SourceAnimeSummary, SourceEpisodeDetail, SourceEpisodeSummary, SourceId, SourceScheduleDay } from './providers/source-types.js';
+import type { AnimeSourceProvider, CatalogQuery, EpisodeQuery, PageResult, SourceAnimeDetail, SourceAnimeSummary, SourceDiscoveryKind, SourceEpisodeDetail, SourceEpisodeSummary, SourceId, SourceScheduleDay } from './providers/source-types.js';
 import { isDefinitiveDeadLink } from './providers/sanka/response.js';
 
 
@@ -13,6 +13,7 @@ type HomeClient = {
 
 type CatalogRepository = {
   listCatalog?(options: CatalogQuery): Promise<PageResult<SourceAnimeSummary>>;
+  upsertSourceHome?(source: SourceId, items: SourceAnimeSummary[]): Promise<void>;
   listEpisodes?(source: SourceId, slug: string, options: EpisodeQuery): Promise<PageResult<SourceEpisodeSummary>>;
   listSourceHome?(source: SourceId, limit?: number): Promise<unknown[]>;
   findDetail?(source: SourceId, slug: string, options?: { includeEpisodes?: boolean }): Promise<SourceAnimeDetail | null>;
@@ -36,6 +37,7 @@ const prioritizedSources: Array<{ id: SourceId; label: string }> = [
   { id: 'samehadaku', label: 'Samehadaku' },
   { id: 'oploverz', label: 'Oploverz' }
 ];
+const discoveryKinds: SourceDiscoveryKind[] = ['ongoing', 'completed', 'search', 'genre'];
 
 function sourceId(value: string): SourceId | null {
   return prioritizedSources.some((item) => item.id === value) ? value as SourceId : null;
@@ -90,6 +92,29 @@ function episodeQuery(requestQuery: unknown): EpisodeQuery {
     page: positiveQueryNumber(query.page, 1, 10_000),
     limit: positiveQueryNumber(query.limit, 50, 100)
   };
+}
+
+function episodeQueryError(requestQuery: unknown): { code: string; message: string } | null {
+  const query = requestQuery as Record<string, unknown>;
+  for (const key of ['q', 'page', 'limit']) {
+    if (query[key] !== undefined && typeof query[key] !== 'string') {
+      return { code: 'INVALID_QUERY', message: 'Parameter episode tidak boleh berulang' };
+    }
+  }
+  for (const key of ['page', 'limit']) {
+    const value = query[key];
+    if (typeof value === 'string' && (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)))) {
+      return { code: 'INVALID_QUERY', message: 'Halaman dan limit harus bilangan bulat positif' };
+    }
+  }
+  if (typeof query.q === 'string' && query.q.trim().length > 200) {
+    return { code: 'INVALID_QUERY', message: 'Pencarian episode maksimal 200 karakter' };
+  }
+  return null;
+}
+
+function discoveryKind(value: string): SourceDiscoveryKind | null {
+  return discoveryKinds.includes(value as SourceDiscoveryKind) ? value as SourceDiscoveryKind : null;
 }
 
 export function buildApp(dependencies: AppDependencies): FastifyInstance {
@@ -174,6 +199,26 @@ export function buildApp(dependencies: AppDependencies): FastifyInstance {
     try {
       if (!dependencies.catalogRepository?.listCatalog) throw new Error('Catalog repository unavailable');
       const result = await dependencies.catalogRepository.listCatalog(query);
+      if (path.endsWith('/search') && query.query && result.items.length === 0) {
+        const matchingProviders = prioritizedSources
+          .filter(({ id }) => !query.source || id === query.source)
+          .map(({ id }) => dependencies.sourceProviders?.[id])
+          .filter((provider): provider is AnimeSourceProvider => Boolean(provider?.discover));
+        const liveItems: SourceAnimeSummary[] = [];
+        for (const provider of matchingProviders) {
+          try {
+            const discovery = await provider.discover!({ kind: 'search', query: query.query, page: query.page ?? 1 });
+            liveItems.push(...discovery.items);
+            await dependencies.catalogRepository.upsertSourceHome?.(provider.source, discovery.items);
+          } catch (cause) {
+            app.log.warn(cause);
+          }
+        }
+        if (liveItems.length > 0) {
+          const items = liveItems.slice(0, query.limit ?? 24);
+          return { success: true, data: items, meta: { page: query.page ?? 1, limit: query.limit ?? 24, total: liveItems.length, pageCount: 1, hasNext: false, hasPrevious: false, storage: 'provider-fallback', persisted: true }, error: null };
+        }
+      }
       return { success: true, data: result.items, meta: { ...result, items: undefined, storage: 'postgres' }, error: null };
     } catch (error) {
       app.log.error(error);
@@ -198,6 +243,40 @@ export function buildApp(dependencies: AppDependencies): FastifyInstance {
       const stored = await dependencies.catalogRepository?.listSourceHome?.(id);
       const data = stored?.length ? stored : await provider.getHome();
       return { success: true, data, meta: { source: id, storage: stored?.length ? 'postgres' : 'provider-fallback' }, error: null };
+    } catch (error) {
+      app.log.error(error);
+      return reply.code(503).send({ success: false, data: null, meta: { source: id }, error: { code: 'SOURCE_UNAVAILABLE', message: 'Sumber sedang tidak tersedia' } });
+    }
+  });
+
+  app.get('/api/v1/sources/:source/discover/:kind', async (request, reply) => {
+    const { source, kind: rawKind } = request.params as { source: string; kind: string };
+    const query = request.query as { page?: string; q?: string };
+    const id = sourceId(source);
+    const kind = discoveryKind(rawKind);
+    const provider = id ? dependencies.sourceProviders?.[id] : undefined;
+    if (!id || !provider) return reply.code(404).send({ success: false, data: null, error: { code: 'SOURCE_NOT_FOUND', message: 'Sumber tidak ditemukan' } });
+    if (!kind || ((kind === 'search' || kind === 'genre') && !query.q?.trim())) {
+      return reply.code(400).send({ success: false, data: null, error: { code: 'INVALID_DISCOVERY_QUERY', message: 'Jenis discovery atau parameter q tidak valid' } });
+    }
+    if (!provider.discover) return reply.code(404).send({ success: false, data: null, error: { code: 'DISCOVERY_UNSUPPORTED', message: 'Discovery tidak tersedia untuk sumber ini' } });
+    try {
+      const data = await provider.discover({ kind, page: positiveQueryNumber(query.page, 1, 10_000), query: query.q?.trim() || undefined });
+      return { success: true, data, meta: { source: id, storage: 'provider-cache' }, error: null };
+    } catch (error) {
+      app.log.error(error);
+      return reply.code(503).send({ success: false, data: null, meta: { source: id }, error: { code: 'SOURCE_UNAVAILABLE', message: 'Sumber sedang tidak tersedia' } });
+    }
+  });
+
+  app.get('/api/v1/sources/:source/genres', async (request, reply) => {
+    const { source } = request.params as { source: string };
+    const id = sourceId(source);
+    const provider = id ? dependencies.sourceProviders?.[id] : undefined;
+    if (!id || !provider) return reply.code(404).send({ success: false, data: null, error: { code: 'SOURCE_NOT_FOUND', message: 'Sumber tidak ditemukan' } });
+    if (!provider.getGenres) return reply.code(404).send({ success: false, data: null, error: { code: 'DISCOVERY_UNSUPPORTED', message: 'Genre tidak tersedia untuk sumber ini' } });
+    try {
+      return { success: true, data: await provider.getGenres(), meta: { source: id, storage: 'provider-cache' }, error: null };
     } catch (error) {
       app.log.error(error);
       return reply.code(503).send({ success: false, data: null, meta: { source: id }, error: { code: 'SOURCE_UNAVAILABLE', message: 'Sumber sedang tidak tersedia' } });
@@ -268,11 +347,33 @@ export function buildApp(dependencies: AppDependencies): FastifyInstance {
   app.get('/api/v1/sources/:source/anime/:slug/episodes', async (request, reply) => {
     const { source, slug } = request.params as { source: string; slug: string };
     const id = sourceId(source);
+    const provider = id ? dependencies.sourceProviders?.[id] : undefined;
     if (!id) return reply.code(404).send({ success: false, data: null, meta: {}, error: { code: 'SOURCE_NOT_FOUND', message: 'Sumber tidak ditemukan' } });
+    const validationError = episodeQueryError(request.query);
+    if (validationError) return reply.code(400).send({ success: false, data: null, meta: {}, error: validationError });
     try {
-      if (!dependencies.catalogRepository?.listEpisodes) throw new Error('Episode repository unavailable');
-      const result = await dependencies.catalogRepository.listEpisodes(id, slug, episodeQuery(request.query));
-      return { success: true, data: result.items, meta: { ...result, items: undefined, source: id, storage: 'postgres' }, error: null };
+      const query = episodeQuery(request.query);
+      if (dependencies.catalogRepository?.listEpisodes) {
+        const result = await dependencies.catalogRepository.listEpisodes(id, slug, query);
+        return { success: true, data: result.items, meta: { ...result, items: undefined, source: id, storage: 'postgres' }, error: null };
+      }
+      if (!provider) throw new Error('Episode provider unavailable');
+      const detail = await provider.getDetail(slug);
+      const needle = query.query?.toLowerCase();
+      const matching = needle
+        ? detail.episodes.filter((episode) => `${episode.number ?? ''} ${episode.title} ${episode.id}`.toLowerCase().includes(needle))
+        : detail.episodes;
+      const limit = query.limit ?? 50;
+      const total = matching.length;
+      const pageCount = total === 0 ? 0 : Math.ceil(total / limit);
+      const page = pageCount === 0 ? 1 : Math.min(query.page ?? 1, pageCount);
+      const items = matching.slice((page - 1) * limit, page * limit);
+      return {
+        success: true,
+        data: items,
+        meta: { source: id, storage: 'provider-fallback', page, limit, total, pageCount, hasNext: pageCount > 0 && page < pageCount, hasPrevious: page > 1 },
+        error: null
+      };
     } catch (error) {
       app.log.error(error);
       return reply.code(503).send({ success: false, data: null, meta: { source: id }, error: { code: 'EPISODES_UNAVAILABLE', message: 'Daftar episode sedang tidak tersedia' } });
@@ -303,6 +404,17 @@ export function buildApp(dependencies: AppDependencies): FastifyInstance {
     } catch (error) {
       app.log.error(error);
       return reply.code(503).send({ success: false, data: null, meta: { source: id }, error: { code: 'SOURCE_UNAVAILABLE', message: 'Server sedang tidak tersedia' } });
+    }
+  });
+
+  app.get('/api/v1/schedule', async (_request, reply) => {
+    try {
+      const stored = await dependencies.catalogRepository?.listSchedule?.();
+      if (!stored?.length) return reply.code(503).send({ success: false, data: null, meta: {}, error: { code: 'SCHEDULE_UNAVAILABLE', message: 'Jadwal sedang tidak tersedia' } });
+      return { success: true, data: stored, meta: { storage: 'postgres', canonical: true }, error: null };
+    } catch (error) {
+      app.log.error(error);
+      return reply.code(503).send({ success: false, data: null, meta: {}, error: { code: 'SCHEDULE_UNAVAILABLE', message: 'Jadwal sedang tidak tersedia' } });
     }
   });
 

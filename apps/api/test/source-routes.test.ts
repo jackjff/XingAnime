@@ -47,6 +47,51 @@ describe('source routes', () => {
     await app.close();
   });
 
+  it('exposes a source discovery page without routing the browser to Sanka', async () => {
+    const selected = {
+      ...provider('otakudesu'),
+      discover: vi.fn(async () => ({
+        items: [{ source: 'otakudesu' as const, slug: 'one-piece', detailSlug: 'one-piece', title: 'One Piece', posterUrl: null, latestEpisode: 1, releaseDay: null }],
+        page: 2,
+        hasNext: true,
+        hasPrevious: true,
+        pageCount: 5
+      }))
+    };
+    const app = buildApp({ homeClient: { getHome: async () => [] }, sourceProviders: { otakudesu: selected } });
+
+    const response = await app.inject({ method: 'GET', url: '/api/v1/sources/otakudesu/discover/ongoing?page=2' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.items[0].title).toBe('One Piece');
+    expect(selected.discover).toHaveBeenCalledWith({ kind: 'ongoing', page: 2, query: undefined });
+    await app.close();
+  });
+
+  it('uses cached provider detail episodes when PostgreSQL episodes are unavailable', async () => {
+    const selected = provider('otakudesu');
+    selected.getDetail = vi.fn(async (slug: string) => ({
+      source: 'otakudesu' as const,
+      slug,
+      title: 'Provider detail',
+      posterUrl: null,
+      synopsis: null,
+      status: null,
+      type: null,
+      studio: null,
+      genres: [],
+      episodes: [{ id: 'provider-episode-1', title: 'Episode 1', number: 1, releaseDate: null }]
+    }));
+    const app = buildApp({ homeClient: { getHome: async () => [] }, sourceProviders: { otakudesu: selected } });
+
+    const response = await app.inject({ method: 'GET', url: '/api/v1/sources/otakudesu/anime/provider-detail/episodes?page=1&limit=50' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toEqual([{ id: 'provider-episode-1', title: 'Episode 1', number: 1, releaseDate: null }]);
+    expect(response.json().meta.storage).toBe('provider-fallback');
+    await app.close();
+  });
+
   it('resolves a server URL through the selected provider', async () => {
     const app = buildApp({ homeClient: { getHome: async () => [] }, sourceProviders: { samehadaku: provider('samehadaku') } });
     const response = await app.inject({ method: 'GET', url: '/api/v1/sources/samehadaku/server/server-7' });

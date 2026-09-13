@@ -27,6 +27,8 @@ Xing Anime adalah platform katalog dan streaming anime berbahasa Indonesia denga
 
 Xing Anime hanya mengakses provider melalui adapter backend. Tidak ada crawling massal, bypass detector, retry agresif, proxy video, atau penyimpanan ulang video pihak ketiga. Detailnya ada di [`docs/provider-policy.md`](docs/provider-policy.md).
 
+Dokumentasi endpoint Sanka yang diberikan pemilik proyek menjadi patokan teknis adapter; sumber aktif dan aturan ekspansinya dicatat di [`docs/sanka-api-reference.md`](docs/sanka-api-reference.md).
+
 ## Development tracking
 
 Branch utama: `main`.

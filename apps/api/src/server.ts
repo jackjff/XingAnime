@@ -21,8 +21,8 @@ const baseUrl = process.env.SANKA_BASE_URL ?? 'https://www.sankavollerei.web.id'
 const interval = Number(process.env.SANKA_MIN_REQUEST_INTERVAL_MS ?? 3500);
 const budget = Number(process.env.SANKA_INTERNAL_BUDGET_PER_MINUTE ?? 18);
 const syncLeaseTtl = Number(process.env.SANKA_SYNC_LEASE_TTL_SECONDS ?? 300) * 1000;
-const posterBackfillBatchSize = Number(process.env.POSTER_BACKFILL_BATCH_SIZE ?? 12);
-const posterBackfillInterval = Number(process.env.POSTER_BACKFILL_INTERVAL_SECONDS ?? 300) * 1000;
+const posterBackfillBatchSize = Number(process.env.POSTER_BACKFILL_BATCH_SIZE ?? 48);
+const posterBackfillInterval = Number(process.env.POSTER_BACKFILL_INTERVAL_SECONDS ?? 60) * 1000;
 const posterBackfillLeaseTtl = Number(process.env.POSTER_BACKFILL_LEASE_TTL_SECONDS ?? 900) * 1000;
 const hydrationBatchSize = Number(process.env.SANKA_HYDRATION_BATCH_SIZE ?? 12);
 const redisUrl = process.env.REDIS_URL;
@@ -58,9 +58,9 @@ const sankaCircuit = new SankaCircuitBreaker();
 const posterClient = new AniListPosterClient();
 
 const sourceProviders = {
-  otakudesu: new CachedSourceProvider(new SankaSourceProvider({ source: 'otakudesu', baseUrl, limiter, circuit: sankaCircuit }), cache, {}),
-  samehadaku: new CachedSourceProvider(new SankaSourceProvider({ source: 'samehadaku', baseUrl, limiter, circuit: sankaCircuit }), cache, {}),
-  oploverz: new CachedSourceProvider(new SankaSourceProvider({ source: 'oploverz', baseUrl, limiter, circuit: sankaCircuit }), cache, {})
+  otakudesu: new CachedSourceProvider(new SankaSourceProvider({ source: 'otakudesu', baseUrl, limiter, circuit: sankaCircuit, posterResolver: (title) => posterClient.resolve(title) }), cache, {}),
+  samehadaku: new CachedSourceProvider(new SankaSourceProvider({ source: 'samehadaku', baseUrl, limiter, circuit: sankaCircuit, posterResolver: (title) => posterClient.resolve(title) }), cache, {}),
+  oploverz: new CachedSourceProvider(new SankaSourceProvider({ source: 'oploverz', baseUrl, limiter, circuit: sankaCircuit, posterResolver: (title) => posterClient.resolve(title) }), cache, {})
 };
 
 let scheduler: BackgroundScheduler | undefined;

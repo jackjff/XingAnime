@@ -13,7 +13,7 @@
 .detail-copy { max-width: 720px; position: relative; z-index: 1; }
 .detail-copy h1, .watch-heading h1, .schedule-intro h1 { font-size: clamp(36px, 5vw, 68px); letter-spacing: -3px; line-height: 1.02; margin: 0 0 20px; }
 .meta-pills, .source-switcher { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
-.meta-pills span, .source-chip { border: 1px solid var(--line); border-radius: 99px; color: #d6cbc4; font-size: 11px; padding: 7px 11px; }
+.meta-pills span, .source-chip { background: transparent; border: 1px solid var(--line); border-radius: 99px; color: #d6cbc4; cursor: pointer; font: inherit; font-size: 11px; padding: 7px 11px; }
 .meta-pills span:first-child, .source-chip.selected { background: rgba(255, 138, 61, .16); border-color: rgba(255, 138, 61, .45); color: var(--orange-bright); }
 .detail-synopsis { color: var(--muted); font-size: 15px; line-height: 1.75; max-width: 680px; white-space: pre-line; }
 .detail-genres { justify-content: start; margin: 22px 0; }
